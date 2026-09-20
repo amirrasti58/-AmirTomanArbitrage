@@ -23,19 +23,16 @@ def send_telegram_message(text):
             data={"chat_id": TELEGRAM_CHAT_ID, "text": text},
             timeout=15,
         )
+        print(f"DEBUG | کد وضعیت: {response.status_code}")
+        print(f"DEBUG | پاسخ تلگرام: {response.text}")
         response.raise_for_status()
-
         print("SUCCESS | پیام با موفقیت به تلگرام ارسال شد")
         return True
-
     except Exception as e:
-        print(f"ERROR | خطا در ارسال پیام تلگرام: {e}")
+        print(f"ERROR | ارسال پیام تلگرام: {e}")
         return False
 
 
 if __name__ == "__main__":
     print("AmirTomanArbitrage is running successfully!")
-
-    send_telegram_message(
-        "✅ ربات AmirTomanArbitrage با موفقیت به تلگرام وصل شد."
-    )
+    send_telegram_message("ربات AmirTomanArbitrage با موفقیت به تلگرام وصل شد.")
