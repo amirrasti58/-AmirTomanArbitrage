@@ -4,21 +4,8 @@ ARBITRAGE BOT
 Wallex + BitPin + Ramzinex + Phinix + Exir + Sarrafex
 
 USDT / TOMAN
-
-Features:
-- Real Order Book
-- Ask/Bid based calculation
-- Multi-level order book simulation
-- Buy fee + Sell fee
-- Maker/Taker configurable per exchange
-- 50,000,000 Toman simulated trade
-- 1.5% minimum profit alert
-- Telegram alerts
-- Route cooldown
-- Continuous monitoring
-- GitHub Actions compatible
-- Monitoring ONLY
-- NO REAL TRADES
+MONITORING ONLY
+NO REAL TRADES
 ============================================================
 """
 
@@ -34,7 +21,6 @@ import requests
 # ============================================================
 
 REQUEST_TIMEOUT = 15
-
 ORDERBOOK_LEVELS = 20
 
 TRADE_AMOUNT_TOMAN = 50_000_000
@@ -79,69 +65,96 @@ TELEGRAM_CHAT_ID = os.environ.get(
 # ============================================================
 # EXCHANGE FEES
 # ============================================================
-#
-# Values are decimal percentages.
-#
-# Example:
-# 0.0030 = 0.30%
-#
-# Every exchange can be overridden independently
-# using GitHub Actions environment variables.
-# ============================================================
 
 EXCHANGE_FEES = {
 
     "Wallex": {
         "maker": float(
-            os.environ.get("WALLEX_MAKER_FEE", "0.0025")
+            os.environ.get(
+                "WALLEX_MAKER_FEE",
+                "0.0025"
+            )
         ),
         "taker": float(
-            os.environ.get("WALLEX_TAKER_FEE", "0.0030")
+            os.environ.get(
+                "WALLEX_TAKER_FEE",
+                "0.0030"
+            )
         ),
     },
 
     "BitPin": {
         "maker": float(
-            os.environ.get("BITPIN_MAKER_FEE", "0.0002")
+            os.environ.get(
+                "BITPIN_MAKER_FEE",
+                "0.0002"
+            )
         ),
         "taker": float(
-            os.environ.get("BITPIN_TAKER_FEE", "0.0005")
+            os.environ.get(
+                "BITPIN_TAKER_FEE",
+                "0.0005"
+            )
         ),
     },
 
     "Ramzinex": {
         "maker": float(
-            os.environ.get("RAMZINEX_MAKER_FEE", "0.0020")
+            os.environ.get(
+                "RAMZINEX_MAKER_FEE",
+                "0.0020"
+            )
         ),
         "taker": float(
-            os.environ.get("RAMZINEX_TAKER_FEE", "0.0025")
+            os.environ.get(
+                "RAMZINEX_TAKER_FEE",
+                "0.0025"
+            )
         ),
     },
 
     "Phinix": {
         "maker": float(
-            os.environ.get("PHINIX_MAKER_FEE", "0.0020")
+            os.environ.get(
+                "PHINIX_MAKER_FEE",
+                "0.0020"
+            )
         ),
         "taker": float(
-            os.environ.get("PHINIX_TAKER_FEE", "0.0020")
+            os.environ.get(
+                "PHINIX_TAKER_FEE",
+                "0.0020"
+            )
         ),
     },
 
     "Exir": {
         "maker": float(
-            os.environ.get("EXIR_MAKER_FEE", "0.0030")
+            os.environ.get(
+                "EXIR_MAKER_FEE",
+                "0.0030"
+            )
         ),
         "taker": float(
-            os.environ.get("EXIR_TAKER_FEE", "0.0030")
+            os.environ.get(
+                "EXIR_TAKER_FEE",
+                "0.0030"
+            )
         ),
     },
 
     "Sarrafex": {
         "maker": float(
-            os.environ.get("SARRAFEX_MAKER_FEE", "0.0030")
+            os.environ.get(
+                "SARRAFEX_MAKER_FEE",
+                "0.0030"
+            )
         ),
         "taker": float(
-            os.environ.get("SARRAFEX_TAKER_FEE", "0.0030")
+            os.environ.get(
+                "SARRAFEX_TAKER_FEE",
+                "0.0030"
+            )
         ),
     },
 }
@@ -165,11 +178,13 @@ SESSION.headers.update({
 
 
 # ============================================================
-# BASIC HELPERS
+# HELPERS
 # ============================================================
 
 def safe_float(value, default=0.0):
+
     try:
+
         if value is None:
             return default
 
@@ -179,16 +194,11 @@ def safe_float(value, default=0.0):
         return float(value)
 
     except Exception:
+
         return default
 
 
 def extract_price(order):
-    """
-    Supports:
-    [price, volume]
-    {"price": ..., "quantity": ...}
-    {"price": ..., "volume": ...}
-    """
 
     if isinstance(order, (list, tuple)):
 
@@ -202,16 +212,16 @@ def extract_price(order):
             "Price",
             "p",
         ):
+
             if key in order:
-                return safe_float(order[key])
+                return safe_float(
+                    order[key]
+                )
 
     return 0.0
 
 
 def extract_volume(order):
-    """
-    Supports multiple common order book formats.
-    """
 
     if isinstance(order, (list, tuple)):
 
@@ -229,8 +239,11 @@ def extract_volume(order):
             "Quantity",
             "Volume",
         ):
+
             if key in order:
-                return safe_float(order[key])
+                return safe_float(
+                    order[key]
+                )
 
     return 0.0
 
@@ -240,6 +253,7 @@ def normalize_orders(
     reverse=False,
     limit=ORDERBOOK_LEVELS
 ):
+
     result = []
 
     if not isinstance(orders, list):
@@ -270,6 +284,7 @@ def create_market_data(
     asks,
     bids
 ):
+
     return {
         "asks": normalize_orders(
             asks,
@@ -302,15 +317,19 @@ def get_exchange_fee(exchange_name):
 def send_telegram_message(message):
 
     if not TELEGRAM_BOT_TOKEN:
+
         print(
             "WARNING | Telegram bot token is not configured"
         )
+
         return False
 
     if not TELEGRAM_CHAT_ID:
+
         print(
             "WARNING | Telegram chat ID is not configured"
         )
+
         return False
 
     url = (
@@ -375,14 +394,21 @@ def get_wallex_market_data():
 
     data = response.json()
 
-    asks = data.get("result", {}).get(
-        "ask",
-        data.get("asks", [])
+    result = data.get(
+        "result",
+        {}
     )
 
-    bids = data.get("result", {}).get(
-        "bid",
-        data.get("bids", [])
+    asks = (
+        result.get("ask")
+        or data.get("asks")
+        or []
+    )
+
+    bids = (
+        result.get("bid")
+        or data.get("bids")
+        or []
     )
 
     market = create_market_data(
@@ -454,7 +480,10 @@ def get_bitpin_market_data():
                 or []
             )
 
-            if isinstance(data.get("data"), dict):
+            if isinstance(
+                data.get("data"),
+                dict
+            ):
 
                 nested = data["data"]
 
@@ -475,7 +504,10 @@ def get_bitpin_market_data():
                 bids
             )
 
-            if market["asks"] and market["bids"]:
+            if (
+                market["asks"]
+                and market["bids"]
+            ):
 
                 print(
                     f"SUCCESS | BitPin | "
@@ -497,6 +529,45 @@ def get_bitpin_market_data():
 # ============================================================
 # RAMZINEX
 # ============================================================
+
+def _ramzinex_symbol(value):
+
+    """
+    Convert Ramzinex symbol objects such as:
+
+    {'en': 'usdt', 'fa': 'تتر'}
+
+    into:
+
+    usdt
+    """
+
+    if isinstance(value, str):
+
+        return value.strip().lower()
+
+    if isinstance(value, dict):
+
+        for key in (
+            "en",
+            "symbol",
+            "code",
+            "name",
+        ):
+
+            if key in value:
+
+                result = value[key]
+
+                if isinstance(
+                    result,
+                    str
+                ):
+
+                    return result.strip().lower()
+
+    return ""
+
 
 def get_ramzinex_pair():
 
@@ -528,6 +599,7 @@ def get_ramzinex_pair():
             value = data.get(key)
 
             if isinstance(value, list):
+
                 candidates.extend(value)
 
             elif isinstance(value, dict):
@@ -535,61 +607,176 @@ def get_ramzinex_pair():
                 for item in value.values():
 
                     if isinstance(item, list):
-                        candidates.extend(item)
+
+                        candidates.extend(
+                            item
+                        )
 
                     elif isinstance(item, dict):
-                        candidates.append(item)
+
+                        candidates.append(
+                            item
+                        )
 
     elif isinstance(data, list):
+
         candidates = data
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # First select using REAL base/quote fields.
+    # Do NOT search the entire text because BTC pairs may
+    # contain BTCUSDT in TradingView/international fields.
+    # --------------------------------------------------------
 
     for item in candidates:
 
         if not isinstance(item, dict):
             continue
 
-        text = str(item).lower()
-
-        has_usdt = (
-            "usdt" in text
-            or "tether" in text
-            or "تتر" in text
+        pair_id = (
+            item.get("pair_id")
+            or item.get("id")
         )
 
-        has_rial = (
-            "rial" in text
-            or "irr" in text
-            or "irt" in text
-            or "toman" in text
-            or "tmn" in text
-            or "تومان" in text
-            or "ریال" in text
+        if pair_id is None:
+            continue
+
+        base = _ramzinex_symbol(
+            item.get(
+                "base_currency_symbol"
+            )
         )
 
-        if has_usdt and has_rial:
+        quote = _ramzinex_symbol(
+            item.get(
+                "quote_currency_symbol"
+            )
+        )
 
-            pair_id = (
-                item.get("id")
-                or item.get("pair_id")
-                or item.get("pairId")
+        if base == "usdt" and quote in (
+            "irr",
+            "irt",
+            "tmn",
+            "toman",
+        ):
+
+            return pair_id, item
+
+    # --------------------------------------------------------
+    # Second fallback: inspect explicit pair/name fields only.
+    # --------------------------------------------------------
+
+    for item in candidates:
+
+        if not isinstance(item, dict):
+            continue
+
+        pair_id = (
+            item.get("pair_id")
+            or item.get("id")
+        )
+
+        if pair_id is None:
+            continue
+
+        base = _ramzinex_symbol(
+            item.get(
+                "base_currency_symbol"
+            )
+        )
+
+        quote = _ramzinex_symbol(
+            item.get(
+                "quote_currency_symbol"
+            )
+        )
+
+        name = item.get("name")
+
+        name_text = ""
+
+        if isinstance(name, dict):
+
+            name_text = (
+                str(name.get("en", ""))
+                .lower()
             )
 
-            if pair_id is not None:
-                return pair_id, item
+        elif isinstance(name, str):
+
+            name_text = name.lower()
+
+        # Explicitly accept only names indicating
+        # USDT/Tether as BASE and Rial/Toman as QUOTE.
+        if (
+            (
+                base in (
+                    "usdt",
+                    "tether"
+                )
+            )
+            and (
+                quote in (
+                    "irr",
+                    "irt",
+                    "tmn",
+                    "toman"
+                )
+            )
+        ):
+
+            return pair_id, item
+
+        if (
+            "usdt" in name_text
+            and (
+                "rial" in name_text
+                or "toman" in name_text
+            )
+        ):
+
+            return pair_id, item
+
+        if (
+            "tether" in name_text
+            and (
+                "rial" in name_text
+                or "toman" in name_text
+            )
+        ):
+
+            return pair_id, item
 
     raise ValueError(
-        "Ramzinex USDT/RIAL pair not found"
+        "Ramzinex USDT/Toman pair not found"
     )
 
 
 def get_ramzinex_market_data():
 
-    pair_id, pair_info = get_ramzinex_pair()
+    pair_id, pair_info = (
+        get_ramzinex_pair()
+    )
+
+    base = _ramzinex_symbol(
+        pair_info.get(
+            "base_currency_symbol"
+        )
+    )
+
+    quote = _ramzinex_symbol(
+        pair_info.get(
+            "quote_currency_symbol"
+        )
+    )
 
     print(
         f"INFO | Ramzinex | "
+        f"USDT pair found | "
         f"Pair ID={pair_id} | "
-        f"Pair={pair_info}"
+        f"BASE={base} | "
+        f"QUOTE={quote}"
     )
 
     urls = [
@@ -622,13 +809,14 @@ def get_ramzinex_market_data():
 
             root = data
 
-            if isinstance(data, dict):
+            if isinstance(
+                data.get("data")
+                if isinstance(data, dict)
+                else None,
+                dict
+            ):
 
-                if isinstance(
-                    data.get("data"),
-                    dict
-                ):
-                    root = data["data"]
+                root = data["data"]
 
             asks = (
                 root.get("sells")
@@ -649,15 +837,21 @@ def get_ramzinex_market_data():
                 bids
             )
 
-            if not market["asks"] or not market["bids"]:
+            if (
+                not market["asks"]
+                or not market["bids"]
+            ):
                 continue
 
-            # Ramzinex may return IRR.
-            # If prices are much larger than normal Toman prices,
-            # convert Rial -> Toman.
-            first_ask = market["asks"][0]["price"]
-            first_bid = market["bids"][0]["price"]
+            first_ask = market[
+                "asks"
+            ][0]["price"]
 
+            first_bid = market[
+                "bids"
+            ][0]["price"]
+
+            # IRR -> TOMAN
             if (
                 first_ask > 1_000_000
                 or first_bid > 1_000_000
@@ -667,7 +861,9 @@ def get_ramzinex_market_data():
                     market["asks"],
                     market["bids"]
                 ):
+
                     for order in side:
+
                         order["price"] /= 10
 
                 print(
@@ -696,104 +892,13 @@ def get_ramzinex_market_data():
 # PHINIX
 # ============================================================
 
-def get_phinix_symbol():
-
-    markets_url = (
-        "https://api.phinix.ir/v1/markets"
-    )
-
-    response = SESSION.get(
-        markets_url,
-        timeout=REQUEST_TIMEOUT
-    )
-
-    response.raise_for_status()
-
-    data = response.json()
-
-    candidates = []
-
-    if isinstance(data, dict):
-
-        result = data.get("result")
-
-        if isinstance(result, list):
-            candidates.extend(result)
-
-        elif isinstance(result, dict):
-            candidates.extend(
-                result.values()
-            )
-
-        markets = data.get("markets")
-
-        if isinstance(markets, list):
-            candidates.extend(markets)
-
-        elif isinstance(markets, dict):
-            candidates.extend(
-                markets.values()
-            )
-
-    elif isinstance(data, list):
-
-        candidates = data
-
-    for item in candidates:
-
-        if isinstance(item, str):
-
-            symbol = item.upper()
-
-            if symbol in (
-                "USDTTMN",
-                "USDTIRT",
-                "USDTIRR",
-                "USDTIRT"
-            ):
-                return symbol
-
-        if isinstance(item, dict):
-
-            text = str(item).lower()
-
-            symbol = (
-                item.get("symbol")
-                or item.get("market")
-                or item.get("name")
-                or ""
-            )
-
-            symbol = str(symbol).upper()
-
-            if (
-                symbol in (
-                    "USDTTMN",
-                    "USDTIRT",
-                    "USDTIRR"
-                )
-                or (
-                    "usdt" in text
-                    and (
-                        "tmn" in text
-                        or "irt" in text
-                        or "irr" in text
-                        or "toman" in text
-                        or "تومان" in text
-                    )
-                )
-            ):
-
-                if symbol:
-                    return symbol
-
-    # Official documentation uses USDTTMN
-    return "USDTTMN"
-
-
 def get_phinix_market_data():
 
-    symbol = get_phinix_symbol()
+    # Do NOT call /v1/markets.
+    # That endpoint was returning HTTP 503.
+    # The public depth endpoint can be queried directly.
+
+    symbol = "USDTTMN"
 
     print(
         f"INFO | Phinix | Symbol={symbol}"
@@ -805,7 +910,9 @@ def get_phinix_market_data():
 
     response = SESSION.get(
         url,
-        params={"symbol": symbol},
+        params={
+            "symbol": symbol
+        },
         timeout=REQUEST_TIMEOUT
     )
 
@@ -813,25 +920,51 @@ def get_phinix_market_data():
 
     data = response.json()
 
-    result = data.get(
-        "result",
-        data
-    )
+    root = data
 
-    if not isinstance(result, dict):
-        raise ValueError(
-            "Phinix invalid orderbook response"
-        )
+    if isinstance(data, dict):
+
+        if isinstance(
+            data.get("data"),
+            dict
+        ):
+
+            nested = data["data"]
+
+            if isinstance(
+                nested.get(symbol),
+                dict
+            ):
+
+                root = nested[symbol]
+
+            else:
+
+                root = nested
+
+        elif isinstance(
+            data.get(symbol),
+            dict
+        ):
+
+            root = data[symbol]
+
+        elif isinstance(
+            data.get("result"),
+            dict
+        ):
+
+            root = data["result"]
 
     asks = (
-        result.get("ask")
-        or result.get("asks")
+        root.get("asks")
+        or root.get("ask")
         or []
     )
 
     bids = (
-        result.get("bid")
-        or result.get("bids")
+        root.get("bids")
+        or root.get("bid")
         or []
     )
 
@@ -840,7 +973,11 @@ def get_phinix_market_data():
         bids
     )
 
-    if not market["asks"] or not market["bids"]:
+    if (
+        not market["asks"]
+        or not market["bids"]
+    ):
+
         raise ValueError(
             "Phinix order book is empty"
         )
@@ -884,19 +1021,32 @@ def get_exir_symbol():
 
         if isinstance(root, dict):
 
-            value = root.get("pairs")
+            value = root.get(
+                "pairs"
+            )
 
-            if isinstance(value, list):
+            if isinstance(
+                value,
+                list
+            ):
+
                 pairs = value
 
-            elif isinstance(value, dict):
+            elif isinstance(
+                value,
+                dict
+            ):
+
                 pairs = list(
                     value.values()
                 )
 
     for pair in pairs:
 
-        if isinstance(pair, str):
+        if isinstance(
+            pair,
+            str
+        ):
 
             p = pair.lower()
 
@@ -909,11 +1059,13 @@ def get_exir_symbol():
                     or "toman" in p
                 )
             ):
+
                 return p
 
-        elif isinstance(pair, dict):
-
-            text = str(pair).lower()
+        elif isinstance(
+            pair,
+            dict
+        ):
 
             symbol = (
                 pair.get("symbol")
@@ -921,7 +1073,9 @@ def get_exir_symbol():
                 or ""
             )
 
-            symbol = str(symbol).lower()
+            symbol = str(
+                symbol
+            ).lower()
 
             if (
                 "usdt" in symbol
@@ -932,19 +1086,8 @@ def get_exir_symbol():
                     or "toman" in symbol
                 )
             ):
-                return symbol
 
-            if (
-                "usdt" in text
-                and (
-                    "irt" in text
-                    or "irr" in text
-                    or "tmn" in text
-                    or "toman" in text
-                )
-            ):
-                if symbol:
-                    return symbol
+                return symbol
 
     return "usdt-irt"
 
@@ -963,7 +1106,9 @@ def get_exir_market_data():
 
     response = SESSION.get(
         url,
-        params={"symbol": symbol},
+        params={
+            "symbol": symbol
+        },
         timeout=REQUEST_TIMEOUT
     )
 
@@ -986,15 +1131,18 @@ def get_exir_market_data():
                 nested.get(symbol),
                 dict
             ):
+
                 root = nested[symbol]
 
             else:
+
                 root = nested
 
         elif isinstance(
             data.get(symbol),
             dict
         ):
+
             root = data[symbol]
 
     asks = (
@@ -1014,7 +1162,11 @@ def get_exir_market_data():
         bids
     )
 
-    if not market["asks"] or not market["bids"]:
+    if (
+        not market["asks"]
+        or not market["bids"]
+    ):
+
         raise ValueError(
             "Exir order book is empty"
         )
@@ -1062,11 +1214,17 @@ def get_sarrafex_market_data():
 
     for item in values:
 
-        if not isinstance(item, dict):
+        if not isinstance(
+            item,
+            dict
+        ):
             continue
 
         pair = str(
-            item.get("pair", "")
+            item.get(
+                "pair",
+                ""
+            )
         ).upper()
 
         if (
@@ -1087,6 +1245,7 @@ def get_sarrafex_market_data():
             target = values[0]
 
     if target is None:
+
         raise ValueError(
             "Sarrafex USDT order book not found"
         )
@@ -1106,7 +1265,11 @@ def get_sarrafex_market_data():
         bids
     )
 
-    if not market["asks"] or not market["bids"]:
+    if (
+        not market["asks"]
+        or not market["bids"]
+    ):
+
         raise ValueError(
             "Sarrafex order book is empty"
         )
@@ -1130,7 +1293,10 @@ def simulate_buy(
     fee_rate
 ):
 
-    remaining_toman = toman_amount
+    remaining_toman = (
+        toman_amount
+    )
+
     usdt_received = 0.0
 
     for order in asks:
@@ -1138,17 +1304,24 @@ def simulate_buy(
         price = order["price"]
         volume = order["volume"]
 
-        if price <= 0 or volume <= 0:
+        if (
+            price <= 0
+            or volume <= 0
+        ):
             continue
 
-        max_toman = price * volume
+        max_toman = (
+            price * volume
+        )
 
         spend = min(
             remaining_toman,
             max_toman
         )
 
-        usdt = spend / price
+        usdt = (
+            spend / price
+        )
 
         usdt_received += usdt
 
@@ -1160,13 +1333,10 @@ def simulate_buy(
     if remaining_toman > 0:
         return None
 
-    # Fee is deducted from received USDT
-    usdt_after_fee = (
+    return (
         usdt_received *
         (1 - fee_rate)
     )
-
-    return usdt_after_fee
 
 
 # ============================================================
@@ -1179,7 +1349,10 @@ def simulate_sell(
     fee_rate
 ):
 
-    remaining_usdt = usdt_amount
+    remaining_usdt = (
+        usdt_amount
+    )
+
     toman_received = 0.0
 
     for order in bids:
@@ -1187,7 +1360,10 @@ def simulate_sell(
         price = order["price"]
         volume = order["volume"]
 
-        if price <= 0 or volume <= 0:
+        if (
+            price <= 0
+            or volume <= 0
+        ):
             continue
 
         sell_volume = min(
@@ -1199,7 +1375,9 @@ def simulate_sell(
             sell_volume * price
         )
 
-        remaining_usdt -= sell_volume
+        remaining_usdt -= (
+            sell_volume
+        )
 
         if remaining_usdt <= 0:
             break
@@ -1207,13 +1385,10 @@ def simulate_sell(
     if remaining_usdt > 0:
         return None
 
-    # Fee deducted from received Toman
-    toman_after_fee = (
+    return (
         toman_received *
         (1 - fee_rate)
     )
-
-    return toman_after_fee
 
 
 # ============================================================
@@ -1283,107 +1458,51 @@ def fetch_all_exchanges():
 
     exchanges = {}
 
-    # --------------------------------------------------------
-    # Wallex
-    # --------------------------------------------------------
+    functions = [
+        (
+            "Wallex",
+            get_wallex_market_data
+        ),
+        (
+            "BitPin",
+            get_bitpin_market_data
+        ),
+        (
+            "Ramzinex",
+            get_ramzinex_market_data
+        ),
+        (
+            "Phinix",
+            get_phinix_market_data
+        ),
+        (
+            "Exir",
+            get_exir_market_data
+        ),
+        (
+            "Sarrafex",
+            get_sarrafex_market_data
+        ),
+    ]
 
-    try:
+    for name, function in functions:
 
-        exchanges["Wallex"] = (
-            get_wallex_market_data()
-        )
+        try:
 
-    except Exception as e:
+            exchanges[name] = function()
 
-        print(
-            f"WARNING | Wallex unavailable | {e}"
-        )
+        except Exception as e:
 
-    # --------------------------------------------------------
-    # BitPin
-    # --------------------------------------------------------
-
-    try:
-
-        exchanges["BitPin"] = (
-            get_bitpin_market_data()
-        )
-
-    except Exception as e:
-
-        print(
-            f"WARNING | BitPin unavailable | {e}"
-        )
-
-    # --------------------------------------------------------
-    # Ramzinex
-    # --------------------------------------------------------
-
-    try:
-
-        exchanges["Ramzinex"] = (
-            get_ramzinex_market_data()
-        )
-
-    except Exception as e:
-
-        print(
-            f"WARNING | Ramzinex unavailable | {e}"
-        )
-
-    # --------------------------------------------------------
-    # Phinix
-    # --------------------------------------------------------
-
-    try:
-
-        exchanges["Phinix"] = (
-            get_phinix_market_data()
-        )
-
-    except Exception as e:
-
-        print(
-            f"WARNING | Phinix unavailable | {e}"
-        )
-
-    # --------------------------------------------------------
-    # Exir
-    # --------------------------------------------------------
-
-    try:
-
-        exchanges["Exir"] = (
-            get_exir_market_data()
-        )
-
-    except Exception as e:
-
-        print(
-            f"WARNING | Exir unavailable | {e}"
-        )
-
-    # --------------------------------------------------------
-    # Sarrafex
-    # --------------------------------------------------------
-
-    try:
-
-        exchanges["Sarrafex"] = (
-            get_sarrafex_market_data()
-        )
-
-    except Exception as e:
-
-        print(
-            f"WARNING | Sarrafex unavailable | {e}"
-        )
+            print(
+                f"WARNING | "
+                f"{name} unavailable | {e}"
+            )
 
     return exchanges
 
 
 # ============================================================
-# CALCULATE ALL ROUTES
+# ROUTES
 # ============================================================
 
 def calculate_all_routes(exchanges):
@@ -1398,7 +1517,10 @@ def calculate_all_routes(exchanges):
 
         for sell_exchange in names:
 
-            if buy_exchange == sell_exchange:
+            if (
+                buy_exchange
+                == sell_exchange
+            ):
                 continue
 
             result = calculate_arbitrage(
@@ -1409,7 +1531,6 @@ def calculate_all_routes(exchanges):
             )
 
             if result is not None:
-
                 results.append(result)
 
     results.sort(
@@ -1421,12 +1542,14 @@ def calculate_all_routes(exchanges):
 
 
 # ============================================================
-# TELEGRAM ALERT
+# ALERT
 # ============================================================
 
 def maybe_send_alert(result):
 
-    profit = result["profit"]
+    profit = result[
+        "profit"
+    ]
 
     profit_percent = result[
         "profit_percent"
@@ -1435,7 +1558,10 @@ def maybe_send_alert(result):
     if profit <= 0:
         return
 
-    if profit_percent < MIN_PROFIT_PERCENT:
+    if (
+        profit_percent
+        < MIN_PROFIT_PERCENT
+    ):
         return
 
     route_key = (
@@ -1475,7 +1601,8 @@ def maybe_send_alert(result):
         f"{result['usdt_bought']:.6f}\n"
         f"FINAL TOMAN: "
         f"{result['toman_received']:,.0f}\n\n"
-        f"ORDER TYPE: {ORDER_TYPE.upper()}\n"
+        f"ORDER TYPE: "
+        f"{ORDER_TYPE.upper()}\n"
         f"MODE: MONITORING ONLY\n"
         f"NO REAL TRADES"
     )
@@ -1486,7 +1613,7 @@ def maybe_send_alert(result):
 
 
 # ============================================================
-# PRINT RANKING
+# RANKING
 # ============================================================
 
 def print_ranking(results):
@@ -1533,7 +1660,7 @@ def print_ranking(results):
 
 
 # ============================================================
-# ONE CYCLE
+# CYCLE
 # ============================================================
 
 def run_cycle(cycle_number):
@@ -1591,7 +1718,9 @@ def run_cycle(cycle_number):
         exchanges
     )
 
-    print_ranking(results)
+    print_ranking(
+        results
+    )
 
     for result in results:
 
@@ -1601,7 +1730,7 @@ def run_cycle(cycle_number):
 
 
 # ============================================================
-# STARTUP MESSAGE
+# STARTUP
 # ============================================================
 
 def send_startup_message():
@@ -1645,11 +1774,14 @@ def continuous_monitoring():
     while True:
 
         elapsed = (
-            time.time() -
-            start_time
+            time.time()
+            - start_time
         )
 
-        if elapsed >= MAX_RUNTIME_SECONDS:
+        if (
+            elapsed
+            >= MAX_RUNTIME_SECONDS
+        ):
 
             print()
             print(
@@ -1683,13 +1815,13 @@ def continuous_monitoring():
             )
 
         elapsed = (
-            time.time() -
-            start_time
+            time.time()
+            - start_time
         )
 
         remaining = (
-            MAX_RUNTIME_SECONDS -
-            elapsed
+            MAX_RUNTIME_SECONDS
+            - elapsed
         )
 
         if remaining <= 0:
