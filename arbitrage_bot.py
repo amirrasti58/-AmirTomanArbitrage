@@ -1,7 +1,7 @@
 """
 ============================================================
 ARBITRAGE BOT
-Wallex + BitPin + Ramzinex + Phinix + Exir + Sarrafex
+Wallex + BitPin + Ramzinex + Exir
 
 USDT / TOMAN
 MONITORING ONLY
@@ -9,27 +9,23 @@ NO REAL TRADES
 
 Features:
 - Order Book based arbitrage
-- Ask price for BUY
-- Bid price for SELL
-- Maker / Taker configurable fees
+- Bid / Ask
+- Order book depth
+- Maker / Taker fees
 - Net profit calculation
-- 50M Toman simulation
-- 20 order-book levels
-- Minimum profit threshold
 - Telegram alerts
-- Alert cooldown
+- Market snapshot
 - Continuous monitoring
-- Opportunity statistics
 - Daily / 7-day / total statistics
-- Periodic Telegram reports
+- Iran timezone
 ============================================================
 """
 
 import os
 import time
 import json
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -39,7 +35,6 @@ import requests
 # ============================================================
 
 REQUEST_TIMEOUT = 15
-
 ORDERBOOK_LEVELS = 20
 
 TRADE_AMOUNT_TOMAN = 50_000_000
@@ -52,7 +47,15 @@ CHECK_INTERVAL_SECONDS = 10
 
 ALERT_COOLDOWN_SECONDS = 60
 
-STATS_FILE = Path("arbitrage_stats.json")
+MAX_RUNTIME_SECONDS = int(
+    os.environ.get("MAX_RUNTIME_SECONDS", "20700")
+)
+
+ORDER_TYPE = os.environ.get("ORDER_TYPE", "taker").lower()
+
+STATS_FILE = "arbitrage_stats.json"
+
+TEHRAN_TZ = ZoneInfo("Asia/Tehran")
 
 
 # ============================================================
@@ -71,23 +74,15 @@ TELEGRAM_CHAT_ID = os.environ.get(
 
 
 # ============================================================
-# ORDER TYPE
-# ============================================================
-
-ORDER_TYPE = os.environ.get(
-    "ORDER_TYPE",
-    "taker"
-).lower()
-
-
-# ============================================================
 # EXCHANGE FEES
+# ============================================================
 #
-# User can change these independently.
+# Values are decimal percentages:
 #
-# Example:
-# Wallex maker = 0.0025
-# Wallex taker = 0.0030
+# 0.0030 = 0.30%
+# 0.0005 = 0.05%
+#
+# You can change them independently.
 # ============================================================
 
 FEES = {
@@ -107,21 +102,35 @@ FEES = {
         "taker": 0.0025,
     },
 
-    "Phinix": {
-        "maker": 0.0020,
-        "taker": 0.0025,
-    },
-
     "Exir": {
         "maker": 0.0020,
         "taker": 0.0025,
     },
-
-    "Sarrafex": {
-        "maker": 0.0020,
-        "taker": 0.0025,
-    },
 }
+
+
+# ============================================================
+# EXCHANGE ENABLE/DISABLE
+# ============================================================
+
+ENABLED_EXCHANGES = [
+    "Wallex",
+    "BitPin",
+    "Ramzinex",
+    "Exir",
+]
+
+
+# ============================================================
+# SESSION
+# ============================================================
+
+SESSION = requests.Session()
+
+SESSION.headers.update({
+    "User-Agent": "Mozilla/5.0 ArbitrageBot/1.0",
+    "Accept": "application/json",
+})
 
 
 # ============================================================
@@ -130,109 +139,78 @@ FEES = {
 
 last_alert_time = {}
 
-session = requests.Session()
+exchange_error_state = {}
 
-session.headers.update({
-    "User-Agent": "ArbitrageMonitor/1.0"
-})
+runtime_start = time.time()
+
+last_report_minute = None
 
 
 # ============================================================
-# GENERAL HELPERS
+# BASIC HELPERS
 # ============================================================
 
-def now():
-    return datetime.now()
+def now_tehran():
+    return datetime.now(TEHRAN_TZ)
 
 
-def timestamp():
-    return now().strftime("%Y-%m-%d %H:%M:%S")
+def format_toman(value):
+    if value is None:
+        return "-"
+
+    return f"{value:,.0f}"
 
 
 def safe_float(value, default=0.0):
+
     try:
         return float(value)
     except Exception:
         return default
 
 
-def get_fee(exchange):
-    fee = FEES.get(exchange, {})
-    return safe_float(
-        fee.get(ORDER_TYPE, 0)
-    )
-
-
-# ============================================================
-# HTTP
-# ============================================================
-
-def http_get(url, params=None):
-    try:
-
-        response = session.get(
-            url,
-            params=params,
-            timeout=REQUEST_TIMEOUT
-        )
-
-        response.raise_for_status()
-
-        return response.json()
-
-    except Exception as e:
-
-        print(
-            f"[{timestamp()}] HTTP ERROR: "
-            f"{url} -> {e}"
-        )
-
-        return None
-
-
-# ============================================================
-# ORDER BOOK NORMALIZATION
-# ============================================================
-
-def normalize_levels(levels):
+def normalize_orderbook(data):
+    """
+    Converts orderbook levels into:
+    [(price, volume), ...]
+    """
 
     result = []
 
-    if not isinstance(levels, list):
+    if not isinstance(data, list):
         return result
 
-    for level in levels:
+    for item in data:
 
         try:
 
-            if isinstance(level, dict):
+            if isinstance(item, (list, tuple)):
 
-                price = (
-                    level.get("price")
-                    or level.get("rate")
-                    or level.get("p")
-                )
+                if len(item) >= 2:
+                    price = float(item[0])
+                    volume = float(item[1])
 
-                volume = (
-                    level.get("amount")
-                    or level.get("quantity")
-                    or level.get("volume")
-                    or level.get("q")
-                )
-
-            elif isinstance(level, (list, tuple)):
-
-                if len(level) < 2:
+                else:
                     continue
 
-                price = level[0]
-                volume = level[1]
+            elif isinstance(item, dict):
+
+                price = float(
+                    item.get("price", 0)
+                )
+
+                volume = float(
+                    item.get(
+                        "quantity",
+                        item.get(
+                            "volume",
+                            item.get("amount", 0)
+                        )
+                    )
+                )
 
             else:
                 continue
-
-            price = safe_float(price)
-            volume = safe_float(volume)
 
             if price > 0 and volume > 0:
 
@@ -247,6 +225,40 @@ def normalize_levels(levels):
 
 
 # ============================================================
+# ERROR REPORTING
+# ============================================================
+
+def report_exchange_error(exchange, message):
+    """
+    Prevents the same error from being printed every 10 seconds.
+    """
+
+    current = time.time()
+
+    previous = exchange_error_state.get(exchange)
+
+    if previous:
+
+        previous_message = previous.get("message")
+        previous_time = previous.get("time", 0)
+
+        if (
+            previous_message == message
+            and current - previous_time < 60
+        ):
+            return
+
+    exchange_error_state[exchange] = {
+        "message": message,
+        "time": current,
+    }
+
+    print(
+        f"[{exchange}] ERROR: {message}"
+    )
+
+
+# ============================================================
 # WALLEX
 # ============================================================
 
@@ -254,48 +266,46 @@ def get_wallex_orderbook():
 
     url = (
         "https://api.wallex.ir/v1/depth"
+        "?symbol=USDTTMN"
     )
-
-    params = {
-        "symbol": "USDTTMN"
-    }
-
-    data = http_get(
-        url,
-        params
-    )
-
-    if not data:
-        return None
 
     try:
 
+        response = SESSION.get(
+            url,
+            timeout=REQUEST_TIMEOUT
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
         raw = data.get("result", data)
 
-        asks = (
-            raw.get("ask")
-            or raw.get("asks")
-            or []
+        asks = normalize_orderbook(
+            raw.get("ask", raw.get("asks", []))
         )
 
-        bids = (
-            raw.get("bid")
-            or raw.get("bids")
-            or []
+        bids = normalize_orderbook(
+            raw.get("bid", raw.get("bids", []))
         )
 
-        asks = normalize_levels(asks)
-        bids = normalize_levels(bids)
+        if not asks or not bids:
+            raise ValueError(
+                "Empty order book"
+            )
 
         return {
+            "exchange": "Wallex",
             "asks": asks,
-            "bids": bids
+            "bids": bids,
         }
 
     except Exception as e:
 
-        print(
-            f"[Wallex] Parse error: {e}"
+        report_exchange_error(
+            "Wallex",
+            str(e)
         )
 
         return None
@@ -307,281 +317,154 @@ def get_wallex_orderbook():
 
 def get_bitpin_orderbook():
 
-    urls = [
+    """
+    Correct BitPin public endpoint:
 
-        (
-            "https://api.bitpin.market/"
-            "v1/mth/otc/orderbook/"
-        ),
+    /api/v1/mth/orderbook/USDT_IRT/
 
-        (
-            "https://api.bitpin.org/"
-            "v1/mth/otc/orderbook/"
-        ),
+    No symbol query parameter is required.
+    """
 
-    ]
+    url = (
+        "https://api.bitpin.market"
+        "/api/v1/mth/orderbook/USDT_IRT/"
+    )
 
-    params = {
-        "symbol": "USDT_IRT"
-    }
+    try:
 
-    for url in urls:
-
-        data = http_get(
+        response = SESSION.get(
             url,
-            params
+            timeout=REQUEST_TIMEOUT
         )
 
-        if not data:
-            continue
+        response.raise_for_status()
 
-        try:
+        data = response.json()
 
-            raw = data.get(
-                "data",
-                data
+        asks = normalize_orderbook(
+            data.get("asks", [])
+        )
+
+        bids = normalize_orderbook(
+            data.get("bids", [])
+        )
+
+        if not asks or not bids:
+            raise ValueError(
+                "Empty order book"
             )
 
-            asks = (
-                raw.get("asks")
-                or raw.get("sell")
-                or []
-            )
+        return {
+            "exchange": "BitPin",
+            "asks": asks,
+            "bids": bids,
+        }
 
-            bids = (
-                raw.get("bids")
-                or raw.get("buy")
-                or []
-            )
+    except Exception as e:
 
-            asks = normalize_levels(asks)
-            bids = normalize_levels(bids)
+        report_exchange_error(
+            "BitPin",
+            str(e)
+        )
 
-            if asks and bids:
-
-                return {
-                    "asks": asks,
-                    "bids": bids
-                }
-
-        except Exception:
-            continue
-
-    print("[BitPin] No valid order book.")
-
-    return None
+        return None
 
 
 # ============================================================
 # RAMZINEX
 # ============================================================
 
-RAMZINEX_PAIRS_URL = (
-    "https://publicapi.ramzinex.com/"
-    "exchange/api/v1.0/exchange/pairs"
-)
-
-
-def get_ramzinex_pair():
-
-    data = http_get(
-        RAMZINEX_PAIRS_URL
-    )
-
-    if not data:
-        return None
-
-    try:
-
-        pairs = data.get(
-            "data",
-            data
-        )
-
-        if isinstance(pairs, dict):
-            pairs = pairs.get(
-                "pairs",
-                []
-            )
-
-        for pair in pairs:
-
-            base = str(
-                pair.get("base")
-                or pair.get("base_currency")
-                or ""
-            ).upper()
-
-            quote = str(
-                pair.get("quote")
-                or pair.get("quote_currency")
-                or ""
-            ).upper()
-
-            pair_id = (
-                pair.get("id")
-                or pair.get("pair_id")
-            )
-
-            if (
-                base == "USDT"
-                and quote in {
-                    "IRT",
-                    "IRR",
-                    "TMN",
-                    "TOMAN"
-                }
-            ):
-
-                return {
-                    "id": pair_id,
-                    "quote": quote
-                }
-
-    except Exception as e:
-
-        print(
-            f"[Ramzinex] Pair parse error: {e}"
-        )
-
-    return None
-
-
 def get_ramzinex_orderbook():
 
-    # Known confirmed pair from previous testing.
-    # If unavailable, dynamically search pairs.
+    """
+    Ramzinex pair 11 was the confirmed USDT/IRR pair
+    used in the previous working version.
 
-    pair_info = {
-        "id": 11,
-        "quote": "IRR"
-    }
+    Ramzinex prices are converted from IRR to TOMAN.
+    """
 
-    pair_id = pair_info["id"]
-    quote = pair_info["quote"]
+    pair_id = 11
 
-    urls = [
+    endpoints = [
 
         (
-            "https://publicapi.ramzinex.com/"
-            f"exchange/api/v1.0/exchange/"
+            "https://publicapi.ramzinex.com"
+            f"/exchange/api/v1.0/exchange/"
             f"orderbooks/{pair_id}/buys_sells"
         ),
 
         (
-            "https://publicapi.ramzinex.com/"
-            f"exchange/api/v1.0/exchange/"
+            "https://publicapi.ramzinex.com"
+            f"/exchange/api/v1.0/exchange/"
             f"orderbooks/{pair_id}"
         ),
-
     ]
 
-    for url in urls:
-
-        data = http_get(url)
-
-        if not data:
-            continue
+    for url in endpoints:
 
         try:
 
-            raw = data.get(
-                "data",
-                data
+            response = SESSION.get(
+                url,
+                timeout=REQUEST_TIMEOUT
             )
+
+            response.raise_for_status()
+
+            data = response.json()
+
+            raw = data.get("data", data)
+
+            buys = []
+            sells = []
 
             if isinstance(raw, dict):
 
-                asks = (
-                    raw.get("asks")
-                    or raw.get("sells")
-                    or raw.get("sell")
-                    or []
+                buys = raw.get(
+                    "buys",
+                    raw.get(
+                        "bids",
+                        raw.get("buy", [])
+                    )
                 )
 
-                bids = (
-                    raw.get("bids")
-                    or raw.get("buys")
-                    or raw.get("buy")
-                    or []
+                sells = raw.get(
+                    "sells",
+                    raw.get(
+                        "asks",
+                        raw.get("sell", [])
+                    )
                 )
 
-            else:
-                continue
+            bids = normalize_orderbook(buys)
+            asks = normalize_orderbook(sells)
 
-            asks = normalize_levels(asks)
-            bids = normalize_levels(bids)
-
-            # Ramzinex pair 11 is IRR.
+            # Ramzinex pair is IRR.
             # Convert Rial -> Toman.
-            if quote == "IRR":
+            bids = [
+                (price / 10, volume)
+                for price, volume in bids
+            ]
 
-                asks = [
-                    (
-                        price / 10,
-                        volume
-                    )
-                    for price, volume in asks
-                ]
+            asks = [
+                (price / 10, volume)
+                for price, volume in asks
+            ]
 
-                bids = [
-                    (
-                        price / 10,
-                        volume
-                    )
-                    for price, volume in bids
-                ]
-
-            if asks and bids:
+            if bids and asks:
 
                 return {
+                    "exchange": "Ramzinex",
                     "asks": asks,
-                    "bids": bids
+                    "bids": bids,
                 }
 
         except Exception as e:
 
-            print(
-                f"[Ramzinex] Parse error: {e}"
+            report_exchange_error(
+                "Ramzinex",
+                str(e)
             )
-
-    print(
-        "[Ramzinex] No valid order book."
-    )
-
-    return None
-
-
-# ============================================================
-# PHINIX
-# ============================================================
-
-def get_phinix_orderbook():
-
-    """
-    Phinix currently may return HTTP 503.
-
-    We keep it isolated so that a temporary failure
-    does NOT stop the entire arbitrage monitor.
-    """
-
-    urls = [
-
-        "https://api.phinix.ir/",
-        "https://api.phinix.io/",
-
-    ]
-
-    for url in urls:
-
-        data = http_get(url)
-
-        if not data:
-            continue
-
-        # Unknown / unstable API structure.
-        # Do not fabricate an order book.
-        return None
 
     return None
 
@@ -590,311 +473,419 @@ def get_phinix_orderbook():
 # EXIR
 # ============================================================
 
+def find_exir_usdt_toman_symbol():
+
+    """
+    Exir:
+    1. Read /v2/constants
+    2. Find active/public USDT + Iranian fiat pair
+    """
+
+    url = (
+        "https://api.exir.io/v2/constants"
+    )
+
+    response = SESSION.get(
+        url,
+        timeout=REQUEST_TIMEOUT
+    )
+
+    response.raise_for_status()
+
+    data = response.json()
+
+    pairs = data.get("pairs", {})
+
+    if not isinstance(pairs, dict):
+        return None
+
+    candidates = []
+
+    for symbol, info in pairs.items():
+
+        symbol_text = str(symbol).lower()
+
+        if not isinstance(info, dict):
+            continue
+
+        active = info.get(
+            "active",
+            True
+        )
+
+        public = info.get(
+            "is_public",
+            True
+        )
+
+        if not active or not public:
+            continue
+
+        parts = symbol_text.replace(
+            "_",
+            "-"
+        ).split("-")
+
+        if len(parts) != 2:
+            continue
+
+        first = parts[0]
+        second = parts[1]
+
+        if "usdt" in parts and (
+            "irt" in parts
+            or "irr" in parts
+            or "toman" in parts
+            or "tmn" in parts
+        ):
+
+            candidates.append(
+                symbol_text
+            )
+
+    if not candidates:
+        return None
+
+    # Prefer USDT/IRT
+    preferred = [
+        "usdt-irt",
+        "usdt-irr",
+        "usdt-toman",
+        "usdt-tmn",
+        "irt-usdt",
+        "irr-usdt",
+        "toman-usdt",
+        "tmn-usdt",
+    ]
+
+    for item in preferred:
+
+        if item in candidates:
+            return item
+
+    return candidates[0]
+
+
 def get_exir_orderbook():
 
-    """
-    Exir API may change.
-    Parser intentionally accepts several common structures.
-    """
+    try:
 
-    urls = [
+        symbol = (
+            find_exir_usdt_toman_symbol()
+        )
 
-        (
-            "https://api.exir.io/v1/"
-            "orderbooks/USDT-IRT"
-        ),
+        if not symbol:
 
-        (
-            "https://api.exir.io/v1/"
-            "orderbooks/USDTIRT"
-        ),
-
-    ]
-
-    for url in urls:
-
-        data = http_get(url)
-
-        if not data:
-            continue
-
-        try:
-
-            raw = data.get(
-                "data",
-                data
+            raise ValueError(
+                "No USDT/Toman market found in Exir constants"
             )
 
-            asks = (
-                raw.get("asks")
-                or raw.get("sell")
-                or []
+        url = (
+            "https://api.exir.io/v2/orderbook"
+        )
+
+        response = SESSION.get(
+            url,
+            params={
+                "symbol": symbol
+            },
+            timeout=REQUEST_TIMEOUT
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        raw = data.get(
+            symbol,
+            data
+        )
+
+        if not isinstance(raw, dict):
+            raise ValueError(
+                "Invalid Exir orderbook response"
             )
 
-            bids = (
-                raw.get("bids")
-                or raw.get("buy")
-                or []
+        bids = normalize_orderbook(
+            raw.get("bids", [])
+        )
+
+        asks = normalize_orderbook(
+            raw.get("asks", [])
+        )
+
+        if not bids or not asks:
+            raise ValueError(
+                f"Empty order book for {symbol}"
             )
 
-            asks = normalize_levels(asks)
-            bids = normalize_levels(bids)
+        # If Exir returns IRR, convert to Toman.
+        if "irr" in symbol:
 
-            if asks and bids:
+            bids = [
+                (price / 10, volume)
+                for price, volume in bids
+            ]
 
-                return {
-                    "asks": asks,
-                    "bids": bids
-                }
+            asks = [
+                (price / 10, volume)
+                for price, volume in asks
+            ]
 
-        except Exception:
-            continue
+        return {
+            "exchange": "Exir",
+            "symbol": symbol,
+            "asks": asks,
+            "bids": bids,
+        }
 
-    print("[Exir] No valid order book.")
+    except Exception as e:
 
-    return None
+        report_exchange_error(
+            "Exir",
+            str(e)
+        )
+
+        return None
 
 
 # ============================================================
-# SARRAFEX
-# ============================================================
-
-def get_sarrafex_orderbook():
-
-    """
-    Sarrafex API structure may change.
-    Several candidate endpoints are tried.
-    """
-
-    urls = [
-
-        (
-            "https://api.sarrafex.com/"
-            "v1/orderbook/USDTIRT"
-        ),
-
-        (
-            "https://api.sarrafex.com/"
-            "v1/orderbooks/USDTIRT"
-        ),
-
-    ]
-
-    for url in urls:
-
-        data = http_get(url)
-
-        if not data:
-            continue
-
-        try:
-
-            raw = data.get(
-                "data",
-                data
-            )
-
-            asks = (
-                raw.get("asks")
-                or raw.get("sell")
-                or []
-            )
-
-            bids = (
-                raw.get("bids")
-                or raw.get("buy")
-                or []
-            )
-
-            asks = normalize_levels(asks)
-            bids = normalize_levels(bids)
-
-            if asks and bids:
-
-                return {
-                    "asks": asks,
-                    "bids": bids
-                }
-
-        except Exception:
-            continue
-
-    print("[Sarrafex] No valid order book.")
-
-    return None
-
-
-# ============================================================
-# GET ALL ORDER BOOKS
+# FETCH ALL ORDER BOOKS
 # ============================================================
 
 def get_all_orderbooks():
 
-    return {
+    orderbooks = {}
+
+    functions = {
 
         "Wallex":
-            get_wallex_orderbook(),
+            get_wallex_orderbook,
 
         "BitPin":
-            get_bitpin_orderbook(),
+            get_bitpin_orderbook,
 
         "Ramzinex":
-            get_ramzinex_orderbook(),
-
-        "Phinix":
-            get_phinix_orderbook(),
+            get_ramzinex_orderbook,
 
         "Exir":
-            get_exir_orderbook(),
-
-        "Sarrafex":
-            get_sarrafex_orderbook(),
-
+            get_exir_orderbook,
     }
+
+    for exchange in ENABLED_EXCHANGES:
+
+        function = functions.get(exchange)
+
+        if function is None:
+            continue
+
+        result = function()
+
+        if result:
+
+            orderbooks[exchange] = result
+
+    return orderbooks
 
 
 # ============================================================
-# BUY FROM ASK
+# FEES
+# ============================================================
+
+def get_fee(exchange):
+
+    exchange_fees = FEES.get(
+        exchange,
+        {}
+    )
+
+    if ORDER_TYPE == "maker":
+
+        return exchange_fees.get(
+            "maker",
+            0
+        )
+
+    return exchange_fees.get(
+        "taker",
+        0
+    )
+
+
+# ============================================================
+# BUY FROM ORDER BOOK
 # ============================================================
 
 def calculate_buy(
     asks,
-    toman_amount
+    amount_toman,
+    fee
 ):
 
-    remaining_toman = toman_amount
+    remaining_toman = amount_toman
 
-    usdt_received = 0.0
+    received_usdt = 0
 
-    toman_spent = 0.0
+    spent_toman = 0
+
+    average_price = 0
 
     for price, volume in asks:
-
-        if price <= 0 or volume <= 0:
-            continue
-
-        max_usdt = (
-            remaining_toman / price
-        )
-
-        buy_usdt = min(
-            volume,
-            max_usdt
-        )
-
-        cost = (
-            buy_usdt * price
-        )
-
-        usdt_received += buy_usdt
-
-        toman_spent += cost
-
-        remaining_toman -= cost
 
         if remaining_toman <= 0:
             break
 
-    if usdt_received <= 0:
+        max_cost = price * volume
+
+        cost = min(
+            remaining_toman,
+            max_cost
+        )
+
+        usdt = cost / price
+
+        spent_toman += cost
+
+        received_usdt += usdt
+
+        remaining_toman -= cost
+
+    if spent_toman <= 0:
         return None
 
+    # Fee charged against received USDT
+    received_after_fee = (
+        received_usdt * (1 - fee)
+    )
+
+    average_price = (
+        spent_toman / received_usdt
+    )
+
     return {
-        "usdt": usdt_received,
-        "toman": toman_spent
+        "spent_toman": spent_toman,
+        "usdt_before_fee": received_usdt,
+        "usdt": received_after_fee,
+        "average_price": average_price,
     }
 
 
 # ============================================================
-# SELL TO BID
+# SELL TO ORDER BOOK
 # ============================================================
 
 def calculate_sell(
     bids,
-    usdt_amount
+    usdt_amount,
+    fee
 ):
 
     remaining_usdt = usdt_amount
 
-    toman_received = 0.0
+    received_toman = 0
+
+    sold_usdt = 0
 
     for price, volume in bids:
-
-        if price <= 0 or volume <= 0:
-            continue
-
-        sell_usdt = min(
-            volume,
-            remaining_usdt
-        )
-
-        toman_received += (
-            sell_usdt * price
-        )
-
-        remaining_usdt -= sell_usdt
 
         if remaining_usdt <= 0:
             break
 
-    sold_usdt = (
-        usdt_amount
-        - remaining_usdt
-    )
+        amount = min(
+            remaining_usdt,
+            volume
+        )
+
+        received_toman += (
+            amount * price
+        )
+
+        sold_usdt += amount
+
+        remaining_usdt -= amount
 
     if sold_usdt <= 0:
         return None
 
+    # Fee charged against received TOMAN
+    received_after_fee = (
+        received_toman * (1 - fee)
+    )
+
+    average_price = (
+        received_toman / sold_usdt
+    )
+
     return {
-        "usdt": sold_usdt,
-        "toman": toman_received
+        "sold_usdt": sold_usdt,
+        "received_toman": received_after_fee,
+        "received_before_fee": received_toman,
+        "average_price": average_price,
     }
 
 
 # ============================================================
-# ARBITRAGE CALCULATION
+# ARBITRAGE ROUTE
 # ============================================================
 
-def calculate_arbitrage(
+def calculate_route(
     buy_exchange,
-    buy_book,
     sell_exchange,
-    sell_book
+    orderbooks
 ):
 
-    buy = calculate_buy(
+    buy_book = orderbooks.get(
+        buy_exchange
+    )
+
+    sell_book = orderbooks.get(
+        sell_exchange
+    )
+
+    if not buy_book or not sell_book:
+        return None
+
+    buy_fee = get_fee(
+        buy_exchange
+    )
+
+    sell_fee = get_fee(
+        sell_exchange
+    )
+
+    buy_result = calculate_buy(
         buy_book["asks"],
-        TRADE_AMOUNT_TOMAN
+        TRADE_AMOUNT_TOMAN,
+        buy_fee
     )
 
-    if not buy:
+    if not buy_result:
         return None
 
-    usdt_after_buy_fee = (
-        buy["usdt"]
-        * (1 - get_fee(buy_exchange))
-    )
-
-    sell = calculate_sell(
+    sell_result = calculate_sell(
         sell_book["bids"],
-        usdt_after_buy_fee
+        buy_result["usdt"],
+        sell_fee
     )
 
-    if not sell:
+    if not sell_result:
         return None
 
-    toman_after_sell_fee = (
-        sell["toman"]
-        * (1 - get_fee(sell_exchange))
+    actual_spent = (
+        buy_result["spent_toman"]
+    )
+
+    final_toman = (
+        sell_result["received_toman"]
     )
 
     net_profit = (
-        toman_after_sell_fee
-        - buy["toman"]
+        final_toman - actual_spent
     )
 
     profit_percent = (
         net_profit
-        / buy["toman"]
+        / actual_spent
         * 100
     )
 
@@ -906,14 +897,20 @@ def calculate_arbitrage(
         "sell_exchange":
             sell_exchange,
 
-        "buy_toman":
-            buy["toman"],
+        "buy_price":
+            buy_result["average_price"],
+
+        "sell_price":
+            sell_result["average_price"],
 
         "usdt":
-            usdt_after_buy_fee,
+            buy_result["usdt"],
 
-        "sell_toman":
-            toman_after_sell_fee,
+        "spent":
+            actual_spent,
+
+        "received":
+            final_toman,
 
         "net_profit":
             net_profit,
@@ -921,27 +918,25 @@ def calculate_arbitrage(
         "profit_percent":
             profit_percent,
 
+        "buy_fee":
+            buy_fee,
+
+        "sell_fee":
+            sell_fee,
     }
 
 
 # ============================================================
-# FIND ALL ROUTES
+# FIND ROUTES
 # ============================================================
 
-def calculate_all_routes(
-    orderbooks
-):
+def calculate_all_routes(orderbooks):
 
-    results = []
+    routes = []
 
-    exchanges = [
-        name
-        for name, book
-        in orderbooks.items()
-        if book
-        and book.get("asks")
-        and book.get("bids")
-    ]
+    exchanges = list(
+        orderbooks.keys()
+    )
 
     for buy_exchange in exchanges:
 
@@ -950,23 +945,98 @@ def calculate_all_routes(
             if buy_exchange == sell_exchange:
                 continue
 
-            result = calculate_arbitrage(
+            route = calculate_route(
                 buy_exchange,
-                orderbooks[buy_exchange],
                 sell_exchange,
-                orderbooks[sell_exchange]
+                orderbooks
             )
 
-            if result:
-                results.append(result)
+            if route:
+                routes.append(route)
 
-    results.sort(
-        key=lambda x:
-            x["net_profit"],
+    routes.sort(
+        key=lambda x: x["net_profit"],
         reverse=True
     )
 
-    return results
+    return routes
+
+
+# ============================================================
+# MARKET SNAPSHOT
+# ============================================================
+
+def print_market_snapshot(
+    orderbooks
+):
+
+    best_ask = None
+    best_bid = None
+
+    for exchange, book in orderbooks.items():
+
+        if book["asks"]:
+
+            ask_price = book["asks"][0][0]
+
+            if (
+                best_ask is None
+                or ask_price < best_ask[0]
+            ):
+
+                best_ask = (
+                    ask_price,
+                    exchange
+                )
+
+        if book["bids"]:
+
+            bid_price = book["bids"][0][0]
+
+            if (
+                best_bid is None
+                or bid_price > best_bid[0]
+            ):
+
+                best_bid = (
+                    bid_price,
+                    exchange
+                )
+
+    print()
+    print("========== MARKET SNAPSHOT ==========")
+
+    if best_ask:
+
+        print(
+            f"Lowest Ask / Buy : "
+            f"{best_ask[1]} -> "
+            f"{format_toman(best_ask[0])}"
+        )
+
+    else:
+
+        print(
+            "Lowest Ask / Buy : -"
+        )
+
+    if best_bid:
+
+        print(
+            f"Highest Bid / Sell: "
+            f"{best_bid[1]} -> "
+            f"{format_toman(best_bid[0])}"
+        )
+
+    else:
+
+        print(
+            "Highest Bid / Sell: -"
+        )
+
+    print(
+        "====================================="
+    )
 
 
 # ============================================================
@@ -983,131 +1053,152 @@ def send_telegram(message):
 
     url = (
         "https://api.telegram.org/bot"
-        f"{TELEGRAM_BOT_TOKEN}/sendMessage"
+        f"{TELEGRAM_BOT_TOKEN}"
+        "/sendMessage"
     )
 
     payload = {
+
         "chat_id":
             TELEGRAM_CHAT_ID,
 
         "text":
             message,
-
-        "parse_mode":
-            "HTML",
-
-        "disable_web_page_preview":
-            True,
     }
 
     try:
 
-        response = session.post(
+        response = SESSION.post(
             url,
             json=payload,
             timeout=REQUEST_TIMEOUT
         )
 
-        return response.ok
+        response.raise_for_status()
+
+        return True
 
     except Exception as e:
 
         print(
-            f"[Telegram] Error: {e}"
+            f"[Telegram] ERROR: {e}"
         )
 
         return False
 
 
 # ============================================================
-# FORMAT MONEY
+# ARBITRAGE ALERT
 # ============================================================
 
-def format_toman(value):
+def send_arbitrage_alert(route):
 
-    try:
-        return f"{value:,.0f}"
-    except Exception:
-        return "0"
+    buy_exchange = route[
+        "buy_exchange"
+    ]
 
+    sell_exchange = route[
+        "sell_exchange"
+    ]
 
-def format_percent(value):
-
-    try:
-        return f"{value:.3f}%"
-    except Exception:
-        return "0.000%"
-
-
-# ============================================================
-# ALERT
-# ============================================================
-
-def send_arbitrage_alert(result):
-
-    route = (
-        f"{result['buy_exchange']}"
-        f"_TO_"
-        f"{result['sell_exchange']}"
+    route_key = (
+        f"{buy_exchange}_TO_{sell_exchange}"
     )
 
-    current = time.time()
+    now = time.time()
 
-    last = last_alert_time.get(
-        route,
+    previous = last_alert_time.get(
+        route_key,
         0
     )
 
     if (
-        current - last
+        now - previous
         < ALERT_COOLDOWN_SECONDS
     ):
         return
 
-    last_alert_time[route] = current
+    profit = route[
+        "net_profit"
+    ]
+
+    profit_percent = route[
+        "profit_percent"
+    ]
+
+    if profit <= 0:
+        return
+
+    if profit_percent < MIN_PROFIT_PERCENT:
+        return
 
     message = (
-        "🚨 <b>ARBITRAGE OPPORTUNITY</b>\n\n"
+        "🚨 ARBITRAGE OPPORTUNITY\n\n"
 
-        f"🟢 Buy: "
-        f"<b>{result['buy_exchange']}</b>\n"
+        f"Buy: {buy_exchange}\n"
+        f"Sell: {sell_exchange}\n\n"
 
-        f"🔴 Sell: "
-        f"<b>{result['sell_exchange']}</b>\n\n"
+        f"Buy price: "
+        f"{format_toman(route['buy_price'])}\n"
 
-        f"💰 Capital: "
-        f"{format_toman(TRADE_AMOUNT_TOMAN)} Toman\n"
+        f"Sell price: "
+        f"{format_toman(route['sell_price'])}\n\n"
 
-        f"💵 USDT: "
-        f"{result['usdt']:.4f}\n\n"
+        f"Capital: "
+        f"{format_toman(route['spent'])} Toman\n"
 
-        f"📈 Net Profit: "
-        f"<b>{format_toman(result['net_profit'])}</b> Toman\n"
+        f"USDT: "
+        f"{route['usdt']:.4f}\n\n"
 
-        f"📊 Profit: "
-        f"<b>{format_percent(result['profit_percent'])}</b>\n\n"
+        f"Net profit: "
+        f"{format_toman(profit)} Toman\n"
 
-        f"⏰ {timestamp()}\n\n"
+        f"Profit: "
+        f"{profit_percent:.3f}%\n\n"
 
-        "⚠️ Monitoring only\n"
-        "No real trade executed."
+        f"Buy fee: "
+        f"{route['buy_fee'] * 100:.3f}%\n"
+
+        f"Sell fee: "
+        f"{route['sell_fee'] * 100:.3f}%\n\n"
+
+        "⚠️ MONITORING ONLY\n"
+        "NO REAL TRADE"
     )
 
-    send_telegram(message)
+    if send_telegram(message):
+
+        last_alert_time[
+            route_key
+        ] = now
 
 
 # ============================================================
-# STATS FILE
+# STATS
 # ============================================================
+
+def default_stats():
+
+    return {
+
+        "total_opportunities": 0,
+
+        "total_profitable_opportunities": 0,
+
+        "total_profit_toman": 0,
+
+        "daily": {},
+
+        "weekly": {},
+    }
+
 
 def load_stats():
 
-    if not STATS_FILE.exists():
-
-        return {
-            "opportunities": [],
-            "total_checks": 0
-        }
+    if not os.path.exists(
+        STATS_FILE
+    ):
+        return default_stats()
 
     try:
 
@@ -1120,26 +1211,13 @@ def load_stats():
             data = json.load(f)
 
         if not isinstance(data, dict):
-            raise ValueError
-
-        data.setdefault(
-            "opportunities",
-            []
-        )
-
-        data.setdefault(
-            "total_checks",
-            0
-        )
+            return default_stats()
 
         return data
 
     except Exception:
 
-        return {
-            "opportunities": [],
-            "total_checks": 0
-        }
+        return default_stats()
 
 
 def save_stats(stats):
@@ -1166,264 +1244,193 @@ def save_stats(stats):
         )
 
 
-# ============================================================
-# RECORD OPPORTUNITY
-# ============================================================
-
-def record_opportunity(
+def update_stats(
     stats,
-    result
+    routes
 ):
 
-    if result["profit_percent"] < MIN_PROFIT_PERCENT:
-        return
-
-    entry = {
-        "timestamp":
-            timestamp(),
-
-        "buy_exchange":
-            result["buy_exchange"],
-
-        "sell_exchange":
-            result["sell_exchange"],
-
-        "profit_percent":
-            result["profit_percent"],
-
-        "net_profit":
-            result["net_profit"],
-
-        "capital":
-            TRADE_AMOUNT_TOMAN,
-    }
-
-    stats["opportunities"].append(
-        entry
+    today = now_tehran().strftime(
+        "%Y-%m-%d"
     )
 
-    # Keep file reasonably small.
-    # 30 days is enough for monitoring history.
-    cutoff = (
-        now()
-        - timedelta(days=30)
+    week = now_tehran().strftime(
+        "%Y-W%W"
     )
 
-    filtered = []
+    if today not in stats["daily"]:
 
-    for item in stats["opportunities"]:
-
-        try:
-
-            dt = datetime.strptime(
-                item["timestamp"],
-                "%Y-%m-%d %H:%M:%S"
-            )
-
-            if dt >= cutoff:
-                filtered.append(item)
-
-        except Exception:
-            continue
-
-    stats["opportunities"] = filtered
-
-
-# ============================================================
-# STATISTICS
-# ============================================================
-
-def calculate_statistics(stats):
-
-    opportunities = (
-        stats.get(
-            "opportunities",
-            []
-        )
-    )
-
-    current = now()
-
-    day_start = datetime(
-        current.year,
-        current.month,
-        current.day
-    )
-
-    week_start = (
-        current
-        - timedelta(days=7)
-    )
-
-    daily = []
-    weekly = []
-
-    for item in opportunities:
-
-        try:
-
-            dt = datetime.strptime(
-                item["timestamp"],
-                "%Y-%m-%d %H:%M:%S"
-            )
-
-            if dt >= day_start:
-                daily.append(item)
-
-            if dt >= week_start:
-                weekly.append(item)
-
-        except Exception:
-            continue
-
-    def summarize(items):
-
-        if not items:
-
-            return {
-                "count": 0,
-                "max_profit_percent": 0,
-                "max_profit_toman": 0,
-                "sum_profit_toman": 0,
-            }
-
-        return {
-
-            "count":
-                len(items),
-
-            "max_profit_percent":
-                max(
-                    x["profit_percent"]
-                    for x in items
-                ),
-
-            "max_profit_toman":
-                max(
-                    x["net_profit"]
-                    for x in items
-                ),
-
-            "sum_profit_toman":
-                sum(
-                    x["net_profit"]
-                    for x in items
-                ),
+        stats["daily"][today] = {
+            "opportunities": 0,
+            "profitable": 0,
+            "profit_toman": 0,
         }
 
-    return {
+    if week not in stats["weekly"]:
 
-        "daily":
-            summarize(daily),
+        stats["weekly"][week] = {
+            "opportunities": 0,
+            "profitable": 0,
+            "profit_toman": 0,
+        }
 
-        "weekly":
-            summarize(weekly),
+    for route in routes:
 
-        "total":
-            summarize(opportunities),
+        stats[
+            "total_opportunities"
+        ] += 1
 
-    }
+        stats[
+            "daily"
+        ][today][
+            "opportunities"
+        ] += 1
 
+        stats[
+            "weekly"
+        ][week][
+            "opportunities"
+        ] += 1
 
-# ============================================================
-# PERIODIC REPORT
-# ============================================================
+        if (
+            route["net_profit"] > 0
+            and
+            route["profit_percent"]
+            >= MIN_PROFIT_PERCENT
+        ):
 
-def create_statistics_report(stats):
+            profit = route[
+                "net_profit"
+            ]
 
-    data = calculate_statistics(
-        stats
-    )
+            stats[
+                "total_profitable_opportunities"
+            ] += 1
 
-    daily = data["daily"]
-    weekly = data["weekly"]
-    total = data["total"]
+            stats[
+                "total_profit_toman"
+            ] += profit
 
-    message = (
-        "📊 <b>ARBITRAGE STATISTICS</b>\n\n"
+            stats[
+                "daily"
+            ][today][
+                "profitable"
+            ] += 1
 
-        "━━━━━━━━━━━━━━\n"
-        "📅 <b>Today</b>\n"
-        f"Opportunities: {daily['count']}\n"
-        f"Best: "
-        f"{format_percent(daily['max_profit_percent'])}\n"
-        f"Best profit: "
-        f"{format_toman(daily['max_profit_toman'])} Toman\n"
-        f"Sum: "
-        f"{format_toman(daily['sum_profit_toman'])} Toman\n\n"
+            stats[
+                "daily"
+            ][today][
+                "profit_toman"
+            ] += profit
 
-        "━━━━━━━━━━━━━━\n"
-        "📆 <b>Last 7 Days</b>\n"
-        f"Opportunities: {weekly['count']}\n"
-        f"Best: "
-        f"{format_percent(weekly['max_profit_percent'])}\n"
-        f"Best profit: "
-        f"{format_toman(weekly['max_profit_toman'])} Toman\n"
-        f"Sum: "
-        f"{format_toman(weekly['sum_profit_toman'])} Toman\n\n"
+            stats[
+                "weekly"
+            ][week][
+                "profitable"
+            ] += 1
 
-        "━━━━━━━━━━━━━━\n"
-        "📈 <b>Total History</b>\n"
-        f"Opportunities: {total['count']}\n"
-        f"Best: "
-        f"{format_percent(total['max_profit_percent'])}\n"
-        f"Best profit: "
-        f"{format_toman(total['max_profit_toman'])} Toman\n"
-        f"Sum: "
-        f"{format_toman(total['sum_profit_toman'])} Toman\n\n"
+            stats[
+                "weekly"
+            ][week][
+                "profit_toman"
+            ] += profit
 
-        f"💰 Simulation capital: "
-        f"{format_toman(TRADE_AMOUNT_TOMAN)} Toman\n"
-
-        f"🎯 Minimum alert: "
-        f"{format_percent(MIN_PROFIT_PERCENT)}\n\n"
-
-        f"⏰ {timestamp()}\n\n"
-
-        "⚠️ Monitoring only"
-    )
-
-    return message
+    save_stats(stats)
 
 
 # ============================================================
-# REPORT SCHEDULE
+# PERIODIC TELEGRAM REPORT
 # ============================================================
 
-REPORT_HOURS = {
-    10,
-    16,
-    18,
+REPORT_TIMES = {
+    "10:00",
+    "16:00",
+    "18:00",
 }
 
 
-last_report_date = None
+def send_periodic_report(stats):
 
+    global last_report_minute
 
-def maybe_send_periodic_report(
-    stats
-):
+    now = now_tehran()
 
-    global last_report_date
-
-    current = now()
-
-    if current.hour not in REPORT_HOURS:
-        return
-
-    current_key = (
-        current.strftime(
-            "%Y-%m-%d-%H"
-        )
+    current_time = now.strftime(
+        "%H:%M"
     )
 
-    if current_key == last_report_date:
+    if current_time not in REPORT_TIMES:
         return
 
-    last_report_date = current_key
+    if last_report_minute == current_time:
+        return
 
-    message = create_statistics_report(
-        stats
+    last_report_minute = current_time
+
+    today = now.strftime(
+        "%Y-%m-%d"
+    )
+
+    week = now.strftime(
+        "%Y-W%W"
+    )
+
+    daily = stats[
+        "daily"
+    ].get(
+        today,
+        {
+            "opportunities": 0,
+            "profitable": 0,
+            "profit_toman": 0,
+        }
+    )
+
+    weekly = stats[
+        "weekly"
+    ].get(
+        week,
+        {
+            "opportunities": 0,
+            "profitable": 0,
+            "profit_toman": 0,
+        }
+    )
+
+    message = (
+        "📊 ARBITRAGE REPORT\n\n"
+
+        f"Date: {today}\n"
+        f"Time: {current_time} Tehran\n\n"
+
+        "TODAY\n"
+        f"Opportunities: "
+        f"{daily['opportunities']}\n"
+
+        f"Profitable: "
+        f"{daily['profitable']}\n"
+
+        f"Profit: "
+        f"{format_toman(daily['profit_toman'])} Toman\n\n"
+
+        "7-DAY PERIOD\n"
+        f"Opportunities: "
+        f"{weekly['opportunities']}\n"
+
+        f"Profitable: "
+        f"{weekly['profitable']}\n"
+
+        f"Profit: "
+        f"{format_toman(weekly['profit_toman'])} Toman\n\n"
+
+        "TOTAL\n"
+        f"Opportunities: "
+        f"{stats['total_opportunities']}\n"
+
+        f"Profitable: "
+        f"{stats['total_profitable_opportunities']}\n"
+
+        f"Total profit: "
+        f"{format_toman(stats['total_profit_toman'])} Toman"
     )
 
     send_telegram(message)
@@ -1433,120 +1440,101 @@ def maybe_send_periodic_report(
 # PRINT ROUTES
 # ============================================================
 
-def print_routes(results):
+def print_routes(routes):
 
     print()
-    print("=" * 80)
     print(
-        f"[{timestamp()}] ARBITRAGE RANKING"
+        "================ ROUTE RANKING ================"
     )
-    print("=" * 80)
 
-    if not results:
+    if not routes:
 
         print(
-            "No valid routes."
+            "No valid arbitrage routes."
+        )
+
+        print(
+            "================================================"
         )
 
         return
 
-    for index, result in enumerate(
-        results,
+    for index, route in enumerate(
+        routes,
         start=1
     ):
 
         print(
-            f"{index:02d}. "
-            f"{result['buy_exchange']}"
-            f" -> "
-            f"{result['sell_exchange']} | "
+            f"{index}. "
+            f"{route['buy_exchange']} "
+            f"-> "
+            f"{route['sell_exchange']} | "
             f"Profit: "
-            f"{format_percent(result['profit_percent'])} | "
+            f"{route['profit_percent']:.3f}% | "
             f"Net: "
-            f"{format_toman(result['net_profit'])} Toman"
+            f"{format_toman(route['net_profit'])} Toman"
         )
 
-
-# ============================================================
-# BEST MARKET CONDITIONS
-# ============================================================
-
-def print_market_snapshot(
-    orderbooks
-):
-
-    valid = []
-
-    for exchange, book in orderbooks.items():
-
-        if not book:
-            continue
-
-        if not book.get("asks"):
-            continue
-
-        if not book.get("bids"):
-            continue
-
-        ask = book["asks"][0][0]
-        bid = book["bids"][0][0]
-
-        valid.append(
-            (
-                exchange,
-                ask,
-                bid
-            )
-        )
-
-    if not valid:
-        return
-
-    lowest_ask = min(
-        valid,
-        key=lambda x: x[1]
-    )
-
-    highest_bid = max(
-        valid,
-        key=lambda x: x[2]
-    )
-
-    print()
     print(
-        "MARKET SNAPSHOT"
-    )
-
-    print(
-        f"Lowest Ask / Buy: "
-        f"{lowest_ask[0]} -> "
-        f"{format_toman(lowest_ask[1])}"
-    )
-
-    print(
-        f"Highest Bid / Sell: "
-        f"{highest_bid[0]} -> "
-        f"{format_toman(highest_bid[2])}"
+        "================================================"
     )
 
 
 # ============================================================
-# MAIN LOOP
+# STARTUP MESSAGE
+# ============================================================
+
+def send_startup_message():
+
+    message = (
+        "🤖 ARBITRAGE BOT STARTED\n\n"
+
+        "MONITORING ONLY\n"
+        "NO REAL TRADES\n\n"
+
+        "Exchanges:\n"
+        "• Wallex\n"
+        "• BitPin\n"
+        "• Ramzinex\n"
+        "• Exir\n\n"
+
+        f"Capital: "
+        f"{format_toman(TRADE_AMOUNT_TOMAN)} Toman\n"
+
+        f"Minimum profit: "
+        f"{MIN_PROFIT_PERCENT:.3f}%\n"
+
+        f"Interval: "
+        f"{CHECK_INTERVAL_SECONDS} seconds\n"
+
+        f"Order type: "
+        f"{ORDER_TYPE}\n\n"
+
+        "Timezone: Asia/Tehran"
+    )
+
+    send_telegram(message)
+
+
+# ============================================================
+# MAIN
 # ============================================================
 
 def main():
 
-    print("=" * 80)
-
+    print()
+    print(
+        "=============================================="
+    )
     print(
         "ARBITRAGE BOT STARTED"
     )
-
     print(
         "MONITORING ONLY - NO REAL TRADES"
     )
-
-    print("=" * 80)
+    print(
+        "=============================================="
+    )
 
     print(
         f"Capital: "
@@ -1555,7 +1543,7 @@ def main():
 
     print(
         f"Minimum profit: "
-        f"{format_percent(MIN_PROFIT_PERCENT)}"
+        f"{MIN_PROFIT_PERCENT:.3f}%"
     )
 
     print(
@@ -1568,120 +1556,121 @@ def main():
         f"{ORDER_TYPE}"
     )
 
-    print("=" * 80)
+    print(
+        "Exchanges: "
+        + ", ".join(ENABLED_EXCHANGES)
+    )
+
+    print(
+        "=============================================="
+    )
+
+    send_startup_message()
 
     stats = load_stats()
 
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-
-        send_telegram(
-            "🤖 <b>Arbitrage Bot Started</b>\n\n"
-            "Monitoring only.\n"
-            "No real trades will be executed.\n\n"
-            f"Capital: "
-            f"{format_toman(TRADE_AMOUNT_TOMAN)} Toman\n"
-            f"Minimum profit: "
-            f"{format_percent(MIN_PROFIT_PERCENT)}\n"
-            f"Interval: "
-            f"{CHECK_INTERVAL_SECONDS}s"
-        )
-
     while True:
 
-        cycle_start = time.time()
-
-        try:
-
-            stats["total_checks"] = (
-                stats.get(
-                    "total_checks",
-                    0
-                ) + 1
-            )
+        if (
+            time.time()
+            - runtime_start
+            >= MAX_RUNTIME_SECONDS
+        ):
 
             print()
             print(
-                f"[{timestamp()}] "
-                "Checking exchanges..."
-            )
-
-            orderbooks = (
-                get_all_orderbooks()
-            )
-
-            valid_count = sum(
-                1
-                for book in orderbooks.values()
-                if book
-                and book.get("asks")
-                and book.get("bids")
+                "Maximum runtime reached."
             )
 
             print(
-                f"Valid order books: "
-                f"{valid_count}/"
-                f"{len(orderbooks)}"
+                "Stopping safely."
             )
+
+            break
+
+        cycle_start = time.time()
+
+        print()
+        print(
+            "------------------------------------------------"
+        )
+
+        print(
+            f"Time: "
+            f"{now_tehran().strftime('%Y-%m-%d %H:%M:%S')}"
+            f" Tehran"
+        )
+
+        print(
+            "Fetching order books..."
+        )
+
+        orderbooks = (
+            get_all_orderbooks()
+        )
+
+        print(
+            f"Valid order books: "
+            f"{len(orderbooks)}/"
+            f"{len(ENABLED_EXCHANGES)}"
+        )
+
+        if orderbooks:
 
             print_market_snapshot(
                 orderbooks
             )
 
-            results = (
-                calculate_all_routes(
-                    orderbooks
+            routes = calculate_all_routes(
+                orderbooks
+            )
+
+            print_routes(routes)
+
+            if routes:
+
+                best_route = routes[0]
+
+                print()
+                print(
+                    "BEST ROUTE"
                 )
+
+                print(
+                    f"{best_route['buy_exchange']}"
+                    f" -> "
+                    f"{best_route['sell_exchange']}"
+                )
+
+                print(
+                    f"Net profit: "
+                    f"{format_toman(best_route['net_profit'])}"
+                    f" Toman"
+                )
+
+                print(
+                    f"Profit: "
+                    f"{best_route['profit_percent']:.3f}%"
+                )
+
+                send_arbitrage_alert(
+                    best_route
+                )
+
+            update_stats(
+                stats,
+                routes
             )
 
-            print_routes(results)
-
-            # ------------------------------------------------
-            # Record opportunities
-            # ------------------------------------------------
-
-            for result in results:
-
-                if (
-                    result["profit_percent"]
-                    >= MIN_PROFIT_PERCENT
-                ):
-
-                    record_opportunity(
-                        stats,
-                        result
-                    )
-
-                    send_arbitrage_alert(
-                        result
-                    )
-
-            # ------------------------------------------------
-            # Save statistics
-            # ------------------------------------------------
-
-            save_stats(stats)
-
-            # ------------------------------------------------
-            # Periodic reports
-            # ------------------------------------------------
-
-            maybe_send_periodic_report(
-                stats
-            )
-
-        except KeyboardInterrupt:
+        else:
 
             print(
-                "\nBot stopped by user."
+                "No valid order books available."
             )
 
-            break
-
-        except Exception as e:
-
-            print(
-                f"[MAIN ERROR] {e}"
-            )
+        send_periodic_report(
+            stats
+        )
 
         elapsed = (
             time.time()
@@ -1700,8 +1689,27 @@ def main():
 
 
 # ============================================================
-# ENTRY POINT
+# RUN
 # ============================================================
 
 if __name__ == "__main__":
-    main()
+
+    try:
+
+        main()
+
+    except KeyboardInterrupt:
+
+        print()
+        print(
+            "Bot stopped manually."
+        )
+
+    except Exception as e:
+
+        print()
+        print(
+            f"FATAL ERROR: {e}"
+        )
+
+        raise
