@@ -24,34 +24,52 @@ import requests
 # SETTINGS
 # ============================================================
 
-REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", "15"))
+REQUEST_TIMEOUT = int(
+    os.environ.get("REQUEST_TIMEOUT", "15")
+)
 
 ORDERBOOK_LEVELS = int(
     os.environ.get("ORDERBOOK_LEVELS", "20")
 )
 
 TRADE_AMOUNT_TOMAN = float(
-    os.environ.get("TRADE_AMOUNT_TOMAN", "50000000")
+    os.environ.get(
+        "TRADE_AMOUNT_TOMAN",
+        "50000000"
+    )
 )
 
 MIN_PROFIT_PERCENT = float(
-    os.environ.get("MIN_SPREAD_PERCENT", "1.5")
+    os.environ.get(
+        "MIN_SPREAD_PERCENT",
+        "1.5"
+    )
 )
 
 CHECK_INTERVAL_SECONDS = int(
-    os.environ.get("CHECK_INTERVAL_SECONDS", "10")
+    os.environ.get(
+        "CHECK_INTERVAL_SECONDS",
+        "10"
+    )
 )
 
 ALERT_COOLDOWN_SECONDS = int(
-    os.environ.get("ALERT_COOLDOWN_SECONDS", "60")
+    os.environ.get(
+        "ALERT_COOLDOWN_SECONDS",
+        "60"
+    )
 )
 
 MAX_RUNTIME_SECONDS = int(
-    os.environ.get("MAX_RUNTIME_SECONDS", "20700")
+    os.environ.get(
+        "MAX_RUNTIME_SECONDS",
+        "20700"
+    )
 )
 
 ORDER_TYPE = os.environ.get(
-    "ORDER_TYPE", "taker"
+    "ORDER_TYPE",
+    "taker"
 ).lower()
 
 
@@ -60,75 +78,109 @@ ORDER_TYPE = os.environ.get(
 # ============================================================
 
 TELEGRAM_BOT_TOKEN = os.environ.get(
-    "TELEGRAM_BOT_TOKEN", ""
+    "TELEGRAM_BOT_TOKEN",
+    ""
 )
 
 TELEGRAM_CHAT_ID = os.environ.get(
-    "TELEGRAM_CHAT_ID", ""
+    "TELEGRAM_CHAT_ID",
+    ""
 )
 
 
 # ============================================================
 # EXCHANGE FEES
-#
-# Values are percentages in decimal form:
-# 0.0030 = 0.30%
-#
-# Can be overridden through GitHub Secrets / Variables.
 # ============================================================
 
 EXCHANGE_FEES = {
+
     "Wallex": {
         "maker": float(
-            os.environ.get("WALLEX_MAKER_FEE", "0.0025")
+            os.environ.get(
+                "WALLEX_MAKER_FEE",
+                "0.0025"
+            )
         ),
         "taker": float(
-            os.environ.get("WALLEX_TAKER_FEE", "0.0030")
+            os.environ.get(
+                "WALLEX_TAKER_FEE",
+                "0.0030"
+            )
         ),
     },
 
     "BitPin": {
         "maker": float(
-            os.environ.get("BITPIN_MAKER_FEE", "0.0002")
+            os.environ.get(
+                "BITPIN_MAKER_FEE",
+                "0.0002"
+            )
         ),
         "taker": float(
-            os.environ.get("BITPIN_TAKER_FEE", "0.0005")
+            os.environ.get(
+                "BITPIN_TAKER_FEE",
+                "0.0005"
+            )
         ),
     },
 
     "Ramzinex": {
         "maker": float(
-            os.environ.get("RAMZINEX_MAKER_FEE", "0.0020")
+            os.environ.get(
+                "RAMZINEX_MAKER_FEE",
+                "0.0020"
+            )
         ),
         "taker": float(
-            os.environ.get("RAMZINEX_TAKER_FEE", "0.0025")
+            os.environ.get(
+                "RAMZINEX_TAKER_FEE",
+                "0.0025"
+            )
         ),
     },
 
     "Nobitex": {
         "maker": float(
-            os.environ.get("NOBITEX_MAKER_FEE", "0.0020")
+            os.environ.get(
+                "NOBITEX_MAKER_FEE",
+                "0.0020"
+            )
         ),
         "taker": float(
-            os.environ.get("NOBITEX_TAKER_FEE", "0.0025")
+            os.environ.get(
+                "NOBITEX_TAKER_FEE",
+                "0.0025"
+            )
         ),
     },
 
     "Exir": {
         "maker": float(
-            os.environ.get("EXIR_MAKER_FEE", "0.0030")
+            os.environ.get(
+                "EXIR_MAKER_FEE",
+                "0.0030"
+            )
         ),
         "taker": float(
-            os.environ.get("EXIR_TAKER_FEE", "0.0030")
+            os.environ.get(
+                "EXIR_TAKER_FEE",
+                "0.0030"
+            )
         ),
     },
 
     "Sarrafex": {
         "maker": float(
-            os.environ.get("SARRAFEX_MAKER_FEE", "0.0030")
+            os.environ.get(
+                "SARRAFEX_MAKER_FEE",
+                "0.0030"
+            )
         ),
         "taker": float(
-            os.environ.get("SARRAFEX_TAKER_FEE", "0.0030")
+            os.environ.get(
+                "SARRAFEX_TAKER_FEE",
+                "0.0030"
+            )
         ),
     },
 }
@@ -156,42 +208,37 @@ SESSION.headers.update({
 # ============================================================
 
 def safe_float(value, default=0.0):
-    """
-    Safely convert a value to float.
-    Handles strings containing commas.
-    """
 
     try:
+
         if value is None:
             return default
 
         if isinstance(value, str):
-            value = value.replace(",", "").strip()
+            value = (
+                value
+                .replace(",", "")
+                .strip()
+            )
 
         return float(value)
 
     except (ValueError, TypeError):
+
         return default
 
 
 def extract_price(item):
-    """
-    Extract price from common order formats.
 
-    Supported examples:
+    if isinstance(
+        item,
+        (list, tuple)
+    ):
 
-    [price, volume]
-
-    {"price": ..., "quantity": ...}
-
-    {"price": ..., "amount": ...}
-
-    {"rate": ..., "amount": ...}
-    """
-
-    if isinstance(item, (list, tuple)):
         if len(item) >= 2:
-            return safe_float(item[0])
+            return safe_float(
+                item[0]
+            )
 
     if isinstance(item, dict):
 
@@ -201,20 +248,27 @@ def extract_price(item):
             "unit_price",
             "unitPrice",
         ):
+
             if key in item:
-                return safe_float(item[key])
+
+                return safe_float(
+                    item[key]
+                )
 
     return 0.0
 
 
 def extract_volume(item):
-    """
-    Extract quantity/volume from common order formats.
-    """
 
-    if isinstance(item, (list, tuple)):
+    if isinstance(
+        item,
+        (list, tuple)
+    ):
+
         if len(item) >= 2:
-            return safe_float(item[1])
+            return safe_float(
+                item[1]
+            )
 
     if isinstance(item, dict):
 
@@ -225,36 +279,50 @@ def extract_volume(item):
             "qty",
             "remaining",
         ):
+
             if key in item:
-                return safe_float(item[key])
+
+                return safe_float(
+                    item[key]
+                )
 
     return 0.0
 
 
-def normalize_orders(orders, limit=ORDERBOOK_LEVELS):
-    """
-    Convert exchange-specific order formats into:
-
-    [
-        (price, volume),
-        ...
-    ]
-    """
+def normalize_orders(
+    orders,
+    limit=ORDERBOOK_LEVELS
+):
 
     result = []
 
-    if not isinstance(orders, list):
+    if not isinstance(
+        orders,
+        list
+    ):
+
         return result
 
     for item in orders:
 
-        price = extract_price(item)
-        volume = extract_volume(item)
+        price = extract_price(
+            item
+        )
 
-        if price > 0 and volume > 0:
+        volume = extract_volume(
+            item
+        )
+
+        if (
+            price > 0
+            and volume > 0
+        ):
 
             result.append(
-                (price, volume)
+                (
+                    price,
+                    volume
+                )
             )
 
         if len(result) >= limit:
@@ -269,9 +337,6 @@ def create_market_data(
     bids,
     extra=None
 ):
-    """
-    Standard exchange market-data structure.
-    """
 
     return {
         "name": name,
@@ -281,10 +346,9 @@ def create_market_data(
     }
 
 
-def get_exchange_fee(exchange_name):
-    """
-    Return configured maker/taker fee.
-    """
+def get_exchange_fee(
+    exchange_name
+):
 
     exchange = EXCHANGE_FEES.get(
         exchange_name,
@@ -293,10 +357,15 @@ def get_exchange_fee(exchange_name):
 
     fee = exchange.get(
         ORDER_TYPE,
-        exchange.get("taker", 0.0)
+        exchange.get(
+            "taker",
+            0.0
+        )
     )
 
-    return safe_float(fee)
+    return safe_float(
+        fee
+    )
 
 
 # ============================================================
@@ -304,20 +373,23 @@ def get_exchange_fee(exchange_name):
 # ============================================================
 
 def send_telegram(message):
-    """
-    Send Telegram message.
-    """
 
     if not TELEGRAM_BOT_TOKEN:
+
         print(
-            "WARNING | TELEGRAM_BOT_TOKEN is not configured"
+            "WARNING | "
+            "TELEGRAM_BOT_TOKEN is not configured"
         )
+
         return False
 
     if not TELEGRAM_CHAT_ID:
+
         print(
-            "WARNING | TELEGRAM_CHAT_ID is not configured"
+            "WARNING | "
+            "TELEGRAM_CHAT_ID is not configured"
         )
+
         return False
 
     url = (
@@ -339,19 +411,23 @@ def send_telegram(message):
         )
 
         print(
-            f"TELEGRAM HTTP STATUS: "
-            f"{response.status_code}"
+            "TELEGRAM HTTP STATUS:",
+            response.status_code
         )
 
         if response.ok:
 
             try:
+
                 data = response.json()
 
                 if data.get("ok") is True:
+
                     print(
-                        "TELEGRAM SUCCESS: MESSAGE SENT"
+                        "TELEGRAM SUCCESS: "
+                        "MESSAGE SENT"
                     )
+
                     return True
 
             except Exception:
@@ -402,26 +478,42 @@ def get_wallex_market_data():
         )
 
         asks = normalize_orders(
-            raw_data.get("ask", [])
+            raw_data.get(
+                "ask",
+                []
+            )
         )
 
         if not asks:
+
             asks = normalize_orders(
-                raw_data.get("asks", [])
+                raw_data.get(
+                    "asks",
+                    []
+                )
             )
 
         bids = normalize_orders(
-            raw_data.get("bid", [])
+            raw_data.get(
+                "bid",
+                []
+            )
         )
 
         if not bids:
+
             bids = normalize_orders(
-                raw_data.get("bids", [])
+                raw_data.get(
+                    "bids",
+                    []
+                )
             )
 
         if not asks or not bids:
+
             raise ValueError(
-                "Wallex returned empty orderbook"
+                "Wallex returned "
+                "empty orderbook"
             )
 
         print(
@@ -454,14 +546,17 @@ def get_bitpin_market_data():
     name = "BitPin"
 
     urls = [
+
         (
             "https://api.bitpin.market/"
             "v1/mth/orderbook/USDT_IRT/"
         ),
+
         (
             "https://api.bitpin.market/"
             "api/v1/mth/orderbook/USDT_IRT/"
         ),
+
         (
             "https://api.bitpin.org/"
             "api/v1/mth/orderbook/USDT_IRT/"
@@ -487,11 +582,17 @@ def get_bitpin_market_data():
             )
 
             asks = normalize_orders(
-                raw.get("asks", [])
+                raw.get(
+                    "asks",
+                    []
+                )
             )
 
             bids = normalize_orders(
-                raw.get("bids", [])
+                raw.get(
+                    "bids",
+                    []
+                )
             )
 
             if asks and bids:
@@ -509,195 +610,350 @@ def get_bitpin_market_data():
                 )
 
         except Exception:
+
             continue
 
     print(
         f"ERROR | {name} | "
-        "All BitPin orderbook endpoints failed"
+        "All BitPin orderbook "
+        "endpoints failed"
     )
 
     return None
 
 
 # ============================================================
-# RAMZINEX HELPERS
+# RAMZINEX
 # ============================================================
 
-def recursive_find_pair_id(obj):
+def normalize_text(value):
+
+    if value is None:
+        return ""
+
+    return (
+        str(value)
+        .strip()
+        .lower()
+        .replace("_", "-")
+        .replace("/", "-")
+        .replace(" ", "-")
+    )
+
+
+def find_ramzinex_pair(
+    obj
+):
     """
-    Search recursively for a USDT / IRR / IRT / TMN / TOMAN pair.
+    Find the USDT/IRR/IRT/TMN pair in the
+    Ramzinex pairs response.
 
-    Ramzinex response structures may contain nested data.
+    Ramzinex pair responses can be nested under
+    result/data and may expose fields such as:
+
+    pair_id
+    url_name
+    base_currency_id
+    quote_currency_id
+    base_currency_symbol
+    quote_currency_symbol
+    name
+    symbol
+    pair
     """
 
-    if isinstance(obj, dict):
+    if isinstance(
+        obj,
+        dict
+    ):
 
-        lower = {
-            str(k).lower(): v
-            for k, v in obj.items()
-        }
+        # ----------------------------------------------------
+        # Direct pair candidate
+        # ----------------------------------------------------
 
-        pair_text_parts = []
+        pair_id = (
+            obj.get("pair_id")
+            or obj.get("pairId")
+            or obj.get("id")
+        )
+
+        text_values = []
 
         for key in (
+            "url_name",
+            "urlName",
             "name",
             "symbol",
-            "url_name",
             "pair",
-            "pair_name",
             "market",
-            "slug",
+            "pair_name",
+            "pairName",
         ):
 
-            if key in lower:
-                pair_text_parts.append(
-                    str(lower[key]).lower()
+            if key in obj:
+
+                text_values.append(
+                    normalize_text(
+                        obj.get(key)
+                    )
                 )
 
-        pair_text = " ".join(
-            pair_text_parts
+        combined_text = " ".join(
+            text_values
         )
 
-        normalized = (
-            pair_text
-            .replace("_", "-")
-            .replace("/", "-")
-            .replace(" ", "-")
+        base_values = []
+
+        quote_values = []
+
+        for key in (
+            "base_currency_symbol",
+            "baseCurrencySymbol",
+            "base_symbol",
+            "baseSymbol",
+            "base_currency",
+            "baseCurrency",
+            "base",
+        ):
+
+            if key in obj:
+
+                base_values.append(
+                    normalize_text(
+                        obj.get(key)
+                    )
+                )
+
+        for key in (
+            "quote_currency_symbol",
+            "quoteCurrencySymbol",
+            "quote_symbol",
+            "quoteSymbol",
+            "quote_currency",
+            "quoteCurrency",
+            "quote",
+        ):
+
+            if key in obj:
+
+                quote_values.append(
+                    normalize_text(
+                        obj.get(key)
+                    )
+                )
+
+        base_text = " ".join(
+            base_values
         )
 
-        if "usdt" in normalized:
+        quote_text = " ".join(
+            quote_values
+        )
 
-            quote_ok = any(
-                x in normalized
-                for x in (
-                    "irr",
-                    "irt",
-                    "tmn",
-                    "toman",
+        # ----------------------------------------------------
+        # Main detection
+        # ----------------------------------------------------
+
+        base_is_usdt = (
+            "usdt" in base_text
+            or "tether" in base_text
+        )
+
+        quote_is_toman = any(
+            item in quote_text
+            for item in (
+                "irr",
+                "irt",
+                "tmn",
+                "toman",
+                "rial",
+            )
+        )
+
+        name_has_usdt = (
+            "usdt" in combined_text
+            or "tether" in combined_text
+        )
+
+        name_has_toman = any(
+            item in combined_text
+            for item in (
+                "irr",
+                "irt",
+                "tmn",
+                "toman",
+                "rial",
+            )
+        )
+
+        if (
+            pair_id is not None
+            and (
+                (
+                    base_is_usdt
+                    and quote_is_toman
+                )
+                or (
+                    name_has_usdt
+                    and name_has_toman
                 )
             )
+        ):
 
-            if quote_ok:
+            try:
 
-                for key in (
-                    "pair_id",
-                    "pairid",
-                    "id",
-                ):
+                return {
+                    "pair_id": int(
+                        pair_id
+                    ),
+                    "pair_name": (
+                        combined_text
+                        or "USDT/TOMAN"
+                    ),
+                }
 
-                    if key in lower:
+            except (
+                ValueError,
+                TypeError
+            ):
 
-                        candidate = lower[key]
+                pass
 
-                        try:
-                            return int(candidate)
-                        except Exception:
-                            pass
+        # ----------------------------------------------------
+        # Recursive search
+        # ----------------------------------------------------
 
         for value in obj.values():
 
-            found = recursive_find_pair_id(
+            found = find_ramzinex_pair(
                 value
             )
 
             if found is not None:
+
                 return found
 
-    elif isinstance(obj, list):
+    elif isinstance(
+        obj,
+        list
+    ):
 
         for item in obj:
 
-            found = recursive_find_pair_id(
+            found = find_ramzinex_pair(
                 item
             )
 
             if found is not None:
+
                 return found
 
     return None
 
 
-def extract_ramzinex_orders(obj):
+def extract_ramzinex_orderbook(
+    data
+):
     """
-    Recursively locate bids/asks in Ramzinex response.
+    Ramzinex public orderbook commonly has:
 
-    Returns:
-
-    (asks, bids)
-    """
-
-    if isinstance(obj, dict):
-
-        lower = {
-            str(k).lower(): v
-            for k, v in obj.items()
+    {
+        "data": {
+            "sells": [
+                [price, amount],
+                ...
+            ],
+            "buys": [
+                [price, amount],
+                ...
+            ]
         }
+    }
 
-        asks_raw = None
-        bids_raw = None
+    We also support asks/bids as a fallback.
+    """
 
-        for key in (
-            "asks",
-            "ask",
-            "sells",
-            "sell",
+    candidates = []
+
+    if isinstance(
+        data,
+        dict
+    ):
+
+        candidates.append(
+            data
+        )
+
+        if isinstance(
+            data.get("data"),
+            dict
         ):
 
-            if key in lower:
-                if isinstance(
-                    lower[key],
-                    list
-                ):
-                    asks_raw = lower[key]
-                    break
+            candidates.append(
+                data["data"]
+            )
 
-        for key in (
-            "bids",
-            "bid",
-            "buys",
-            "buy",
+        if isinstance(
+            data.get("result"),
+            dict
         ):
 
-            if key in lower:
-                if isinstance(
-                    lower[key],
-                    list
-                ):
-                    bids_raw = lower[key]
-                    break
-
-        if asks_raw is not None and bids_raw is not None:
-
-            asks = normalize_orders(
-                asks_raw
+            candidates.append(
+                data["result"]
             )
 
-            bids = normalize_orders(
-                bids_raw
+            if isinstance(
+                data["result"].get("data"),
+                dict
+            ):
+
+                candidates.append(
+                    data["result"]["data"]
+                )
+
+    for obj in candidates:
+
+        if not isinstance(
+            obj,
+            dict
+        ):
+            continue
+
+        sells = (
+            obj.get("sells")
+            or obj.get("asks")
+            or obj.get("sell")
+            or obj.get("ask")
+        )
+
+        buys = (
+            obj.get("buys")
+            or obj.get("bids")
+            or obj.get("buy")
+            or obj.get("bid")
+        )
+
+        asks = normalize_orders(
+            sells
+            if isinstance(
+                sells,
+                list
             )
+            else []
+        )
 
-            if asks and bids:
-                return asks, bids
-
-        for value in obj.values():
-
-            asks, bids = extract_ramzinex_orders(
-                value
+        bids = normalize_orders(
+            buys
+            if isinstance(
+                buys,
+                list
             )
+            else []
+        )
 
-            if asks and bids:
-                return asks, bids
+        if asks and bids:
 
-    elif isinstance(obj, list):
-
-        for item in obj:
-
-            asks, bids = extract_ramzinex_orders(
-                item
-            )
-
-            if asks and bids:
-                return asks, bids
+            return asks, bids
 
     return [], []
 
@@ -713,14 +969,54 @@ def get_ramzinex_market_data():
 
     try:
 
-        pairs_response = SESSION.get(
+        response = SESSION.get(
             pairs_url,
             timeout=REQUEST_TIMEOUT,
         )
 
-        pairs_response.raise_for_status()
+        response.raise_for_status()
 
-        pairs_data = pairs_response.json()
+        pairs_data = response.json()
+
+        pair = find_ramzinex_pair(
+            pairs_data
+        )
+
+        if pair is None:
+
+            print(
+                f"ERROR | {name} | "
+                "USDT/TOMAN pair was not found"
+            )
+
+            # Helpful diagnostic only:
+            # show top-level response keys.
+            if isinstance(
+                pairs_data,
+                dict
+            ):
+
+                print(
+                    f"DEBUG | {name} | "
+                    "Pairs keys: "
+                    f"{list(pairs_data.keys())[:20]}"
+                )
+
+            return None
+
+        pair_id = pair[
+            "pair_id"
+        ]
+
+        pair_name = pair[
+            "pair_name"
+        ]
+
+        print(
+            f"INFO | {name} | "
+            f"Pair ID={pair_id} | "
+            f"Pair={pair_name}"
+        )
 
     except Exception as exc:
 
@@ -731,35 +1027,17 @@ def get_ramzinex_market_data():
 
         return None
 
-    pair_id = recursive_find_pair_id(
-        pairs_data
-    )
-
-    if pair_id is None:
-
-        print(
-            f"ERROR | {name} | "
-            "USDT/IRT pair was not found"
-        )
-
-        return None
-
-    print(
-        f"INFO | {name} | "
-        f"USDT pair ID={pair_id}"
-    )
-
     orderbook_urls = [
 
         (
             "https://publicapi.ramzinex.com/"
-            f"exchange/api/v1.0/exchange/"
+            "exchange/api/v1.0/exchange/"
             f"orderbooks/{pair_id}/buys_sells"
         ),
 
         (
             "https://publicapi.ramzinex.com/"
-            f"exchange/api/v1.0/exchange/"
+            "exchange/api/v1.0/exchange/"
             f"orderbooks/{pair_id}"
         ),
     ]
@@ -775,66 +1053,83 @@ def get_ramzinex_market_data():
 
             response.raise_for_status()
 
-            data = response.json()
-
-            asks, bids = extract_ramzinex_orders(
-                data
+            orderbook_data = (
+                response.json()
             )
 
-            if asks and bids:
+            asks, bids = (
+                extract_ramzinex_orderbook(
+                    orderbook_data
+                )
+            )
 
-                # Ramzinex may report prices in IRR.
-                #
-                # If the values are clearly 10x larger
-                # than normal Toman prices, convert them.
-                #
-                # This is intentionally conservative.
+            if not asks or not bids:
+                continue
 
-                top_ask = asks[0][0]
-                top_bid = bids[0][0]
+            # ------------------------------------------------
+            # Ramzinex public API commonly reports IRR.
+            #
+            # We convert IRR -> TOMAN.
+            #
+            # Example:
+            # 277,000 IRR -> 27,700 TOMAN
+            # ------------------------------------------------
 
-                if (
-                    top_ask > 1_000_000
-                    and top_bid > 1_000_000
-                ):
+            top_ask = asks[0][0]
+            top_bid = bids[0][0]
 
-                    asks = [
-                        (
-                            price / 10,
-                            volume
-                        )
-                        for price, volume in asks
-                    ]
+            if (
+                top_ask > 1_000_000
+                and top_bid > 1_000_000
+            ):
 
-                    bids = [
-                        (
-                            price / 10,
-                            volume
-                        )
-                        for price, volume in bids
-                    ]
-
-                    print(
-                        f"INFO | {name} | "
-                        "IRR -> TOMAN conversion applied"
+                asks = [
+                    (
+                        price / 10,
+                        volume
                     )
+                    for price, volume
+                    in asks
+                ]
+
+                bids = [
+                    (
+                        price / 10,
+                        volume
+                    )
+                    for price, volume
+                    in bids
+                ]
 
                 print(
-                    f"SUCCESS | {name} | "
-                    f"ASKS={len(asks)} | "
-                    f"BIDS={len(bids)}"
+                    f"INFO | {name} | "
+                    "IRR -> TOMAN conversion applied"
                 )
 
-                return create_market_data(
-                    name,
-                    asks,
-                    bids,
-                    {
-                        "pair_id": pair_id
-                    }
-                )
+            print(
+                f"SUCCESS | {name} | "
+                f"ASKS={len(asks)} | "
+                f"BIDS={len(bids)}"
+            )
 
-        except Exception:
+            return create_market_data(
+                name,
+                asks,
+                bids,
+                {
+                    "pair_id": pair_id,
+                    "pair_name": pair_name,
+                }
+            )
+
+        except Exception as exc:
+
+            print(
+                f"DEBUG | {name} | "
+                f"Orderbook attempt failed: "
+                f"{exc}"
+            )
+
             continue
 
     print(
@@ -854,10 +1149,12 @@ def get_nobitex_market_data():
     name = "Nobitex"
 
     urls = [
+
         (
             "https://api.nobitex.ir/"
             "v3/orderbook/USDTIRT"
         ),
+
         (
             "https://api.nobitex.ir/"
             "v3/orderbook/all"
@@ -879,13 +1176,17 @@ def get_nobitex_market_data():
 
             data = response.json()
 
-            # /v3/orderbook/USDTIRT
-            if "asks" in data and "bids" in data:
+            if (
+                "asks" in data
+                and "bids" in data
+            ):
 
                 raw = data
 
-            # /v3/orderbook/all
-            elif isinstance(data, dict):
+            elif isinstance(
+                data,
+                dict
+            ):
 
                 raw = data.get(
                     "USDTIRT",
@@ -896,14 +1197,21 @@ def get_nobitex_market_data():
                 )
 
             else:
+
                 raw = {}
 
             asks = normalize_orders(
-                raw.get("asks", [])
+                raw.get(
+                    "asks",
+                    []
+                )
             )
 
             bids = normalize_orders(
-                raw.get("bids", [])
+                raw.get(
+                    "bids",
+                    []
+                )
             )
 
             if asks and bids:
@@ -921,14 +1229,14 @@ def get_nobitex_market_data():
                 )
 
             last_error = (
-                "Nobitex returned empty orderbook"
+                "Nobitex returned "
+                "empty orderbook"
             )
 
         except Exception as exc:
 
             last_error = exc
 
-            # Retry once for transient network errors.
             time.sleep(1)
 
     print(
@@ -940,7 +1248,7 @@ def get_nobitex_market_data():
 
 
 # ============================================================
-# EXIR HELPERS
+# EXIR
 # ============================================================
 
 def get_exir_symbol():
@@ -963,12 +1271,17 @@ def get_exir_symbol():
         {}
     )
 
-    if isinstance(pairs, dict):
+    if isinstance(
+        pairs,
+        dict
+    ):
 
-        # First try explicit pair metadata.
         for key, pair in pairs.items():
 
-            if not isinstance(pair, dict):
+            if not isinstance(
+                pair,
+                dict
+            ):
                 continue
 
             pair_base = str(
@@ -1002,10 +1315,11 @@ def get_exir_symbol():
                     )
                 ).lower()
 
-        # Fallback: inspect pair names.
         for key in pairs.keys():
 
-            symbol = str(key).lower()
+            symbol = str(
+                key
+            ).lower()
 
             normalized = (
                 symbol
@@ -1028,15 +1342,7 @@ def get_exir_symbol():
 
                 return symbol
 
-    # Final known candidate.
-    candidates = [
-        "usdt-irt",
-        "usdt-irr",
-        "usdt-tmn",
-        "usdt-toman",
-    ]
-
-    return candidates[0]
+    return "usdt-irt"
 
 
 def get_exir_market_data():
@@ -1068,27 +1374,16 @@ def get_exir_market_data():
 
         data = response.json()
 
-        # Official Exir response is:
-        #
-        # {
-        #   "btc-usdt": {
-        #       "bids": [...],
-        #       "asks": [...]
-        #   }
-        # }
-        #
-        # Therefore the old parser which looked for
-        # top-level asks/bids was incorrect.
-
         raw = data.get(
             symbol,
             {}
         )
 
-        # Case-insensitive fallback.
         if not raw:
 
-            symbol_lower = symbol.lower()
+            symbol_lower = (
+                symbol.lower()
+            )
 
             for key, value in data.items():
 
@@ -1101,23 +1396,29 @@ def get_exir_market_data():
                     break
 
         asks = normalize_orders(
-            raw.get("asks", [])
+            raw.get(
+                "asks",
+                []
+            )
         )
 
         bids = normalize_orders(
-            raw.get("bids", [])
+            raw.get(
+                "bids",
+                []
+            )
         )
 
         if not asks or not bids:
 
             print(
                 f"ERROR | {name} | "
-                "Exir returned empty orderbook"
+                "Exir returned "
+                "empty orderbook"
             )
 
             return None
 
-        # Exir currently returns 10 levels.
         print(
             f"SUCCESS | {name} | "
             f"ASKS={len(asks)} | "
@@ -1176,18 +1477,28 @@ def get_sarrafex_market_data():
             []
         )
 
-        if not isinstance(values, list):
+        if not isinstance(
+            values,
+            list
+        ):
+
             values = []
 
         selected = None
 
         for item in values:
 
-            if not isinstance(item, dict):
+            if not isinstance(
+                item,
+                dict
+            ):
                 continue
 
             pair = str(
-                item.get("Pair", "")
+                item.get(
+                    "Pair",
+                    ""
+                )
             ).upper()
 
             if pair in (
@@ -1199,9 +1510,11 @@ def get_sarrafex_market_data():
                 selected = item
                 break
 
-        # If filter already returned one item,
-        # accept it.
-        if selected is None and len(values) == 1:
+        if (
+            selected is None
+            and len(values) == 1
+        ):
+
             selected = values[0]
 
         if selected is None:
@@ -1214,18 +1527,25 @@ def get_sarrafex_market_data():
             return None
 
         asks = normalize_orders(
-            selected.get("asks", [])
+            selected.get(
+                "asks",
+                []
+            )
         )
 
         bids = normalize_orders(
-            selected.get("bids", [])
+            selected.get(
+                "bids",
+                []
+            )
         )
 
         if not asks or not bids:
 
             print(
                 f"ERROR | {name} | "
-                "Sarrafex returned empty orderbook"
+                "Sarrafex returned "
+                "empty orderbook"
             )
 
             return None
@@ -1260,32 +1580,25 @@ def simulate_buy(
     toman_amount,
     fee
 ):
-    """
-    Spend toman_amount on asks.
 
-    Returns:
-
-    {
-        "usdt": acquired amount,
-        "spent": actual toman,
-        "average_price": ...
-    }
-
-    Fee is charged on acquired USDT.
-    """
-
-    remaining_toman = toman_amount
+    remaining_toman = (
+        toman_amount
+    )
 
     total_usdt = 0.0
     total_spent = 0.0
 
     for price, volume in asks:
 
-        if price <= 0 or volume <= 0:
+        if (
+            price <= 0
+            or volume <= 0
+        ):
             continue
 
         max_usdt = (
-            remaining_toman / price
+            remaining_toman
+            / price
         )
 
         usdt_to_buy = min(
@@ -1297,27 +1610,39 @@ def simulate_buy(
             continue
 
         spent = (
-            usdt_to_buy * price
+            usdt_to_buy
+            * price
         )
 
-        total_usdt += usdt_to_buy
-        total_spent += spent
+        total_usdt += (
+            usdt_to_buy
+        )
 
-        remaining_toman -= spent
+        total_spent += (
+            spent
+        )
 
-        if remaining_toman <= 0.000001:
+        remaining_toman -= (
+            spent
+        )
+
+        if (
+            remaining_toman
+            <= 0.000001
+        ):
             break
 
     if total_usdt <= 0:
         return None
 
-    # Buy-side fee.
     net_usdt = (
-        total_usdt * (1 - fee)
+        total_usdt
+        * (1 - fee)
     )
 
     average_price = (
-        total_spent / total_usdt
+        total_spent
+        / total_usdt
     )
 
     return {
@@ -1333,18 +1658,20 @@ def simulate_sell(
     usdt_amount,
     fee
 ):
-    """
-    Sell usdt_amount through bids.
-    """
 
-    remaining_usdt = usdt_amount
+    remaining_usdt = (
+        usdt_amount
+    )
 
     total_toman = 0.0
     total_sold = 0.0
 
     for price, volume in bids:
 
-        if price <= 0 or volume <= 0:
+        if (
+            price <= 0
+            or volume <= 0
+        ):
             continue
 
         usdt_to_sell = min(
@@ -1356,27 +1683,39 @@ def simulate_sell(
             continue
 
         received = (
-            usdt_to_sell * price
+            usdt_to_sell
+            * price
         )
 
-        total_toman += received
-        total_sold += usdt_to_sell
+        total_toman += (
+            received
+        )
 
-        remaining_usdt -= usdt_to_sell
+        total_sold += (
+            usdt_to_sell
+        )
 
-        if remaining_usdt <= 0.000001:
+        remaining_usdt -= (
+            usdt_to_sell
+        )
+
+        if (
+            remaining_usdt
+            <= 0.000001
+        ):
             break
 
     if total_sold <= 0:
         return None
 
-    # Sell-side fee.
     net_toman = (
-        total_toman * (1 - fee)
+        total_toman
+        * (1 - fee)
     )
 
     average_price = (
-        total_toman / total_sold
+        total_toman
+        / total_sold
     )
 
     return {
@@ -1395,15 +1734,14 @@ def calculate_arbitrage(
     buy_market,
     sell_market
 ):
-    """
-    Buy USDT on buy_market.
-    Sell USDT on sell_market.
 
-    All fees are included.
-    """
+    buy_exchange = (
+        buy_market["name"]
+    )
 
-    buy_exchange = buy_market["name"]
-    sell_exchange = sell_market["name"]
+    sell_exchange = (
+        sell_market["name"]
+    )
 
     buy_fee = get_exchange_fee(
         buy_exchange
@@ -1431,9 +1769,9 @@ def calculate_arbitrage(
     if not sell_result:
         return None
 
-    final_toman = sell_result[
-        "received"
-    ]
+    final_toman = (
+        sell_result["received"]
+    )
 
     profit = (
         final_toman
@@ -1447,29 +1785,40 @@ def calculate_arbitrage(
     )
 
     return {
-        "buy_exchange": buy_exchange,
-        "sell_exchange": sell_exchange,
 
-        "buy_fee": buy_fee,
-        "sell_fee": sell_fee,
+        "buy_exchange":
+            buy_exchange,
 
-        "buy_price": buy_result[
-            "average_price"
-        ],
+        "sell_exchange":
+            sell_exchange,
 
-        "sell_price": sell_result[
-            "average_price"
-        ],
+        "buy_fee":
+            buy_fee,
 
-        "usdt_bought": buy_result[
-            "usdt"
-        ],
+        "sell_fee":
+            sell_fee,
 
-        "final_toman": final_toman,
+        "buy_price":
+            buy_result[
+                "average_price"
+            ],
 
-        "profit": profit,
+        "sell_price":
+            sell_result[
+                "average_price"
+            ],
 
-        "profit_percent": profit_percent,
+        "usdt_bought":
+            buy_result["usdt"],
+
+        "final_toman":
+            final_toman,
+
+        "profit":
+            profit,
+
+        "profit_percent":
+            profit_percent,
     }
 
 
@@ -1480,11 +1829,17 @@ def calculate_arbitrage(
 def fetch_all_exchanges():
 
     fetchers = [
+
         get_wallex_market_data,
+
         get_bitpin_market_data,
+
         get_ramzinex_market_data,
+
         get_nobitex_market_data,
+
         get_exir_market_data,
+
         get_sarrafex_market_data,
     ]
 
@@ -1505,13 +1860,15 @@ def fetch_all_exchanges():
             else:
 
                 print(
-                    "WARNING | Exchange skipped"
+                    "WARNING | "
+                    "Exchange skipped"
                 )
 
         except Exception as exc:
 
             print(
-                "WARNING | Exchange skipped |",
+                "WARNING | "
+                "Exchange skipped |",
                 exc
             )
 
@@ -1522,7 +1879,9 @@ def fetch_all_exchanges():
 # TELEGRAM ALERT
 # ============================================================
 
-def send_arbitrage_alert(result):
+def send_arbitrage_alert(
+    result
+):
 
     route = (
         f'{result["buy_exchange"]}'
@@ -1541,6 +1900,7 @@ def send_arbitrage_alert(result):
         now - last_time
         < ALERT_COOLDOWN_SECONDS
     ):
+
         return
 
     if result["profit"] <= 0:
@@ -1550,48 +1910,72 @@ def send_arbitrage_alert(result):
         result["profit_percent"]
         < MIN_PROFIT_PERCENT
     ):
+
         return
 
     last_alert_time[route] = now
 
     message = (
+
         "🚨 ARBITRAGE OPPORTUNITY\n"
         "\n"
-        f'BUY: {result["buy_exchange"]}\n'
-        f'SELL: {result["sell_exchange"]}\n'
+
+        f'BUY: '
+        f'{result["buy_exchange"]}\n'
+
+        f'SELL: '
+        f'{result["sell_exchange"]}\n'
+
         "\n"
+
         f'Buy Avg: '
         f'{result["buy_price"]:,.0f} Toman\n'
+
         f'Sell Avg: '
         f'{result["sell_price"]:,.0f} Toman\n'
+
         "\n"
+
         f'Amount: '
         f'{TRADE_AMOUNT_TOMAN:,.0f} Toman\n'
+
         f'USDT: '
         f'{result["usdt_bought"]:.4f}\n'
+
         "\n"
+
         f'Profit: '
         f'{result["profit"]:,.0f} Toman\n'
+
         f'Profit %: '
         f'{result["profit_percent"]:.3f}%\n'
+
         "\n"
+
         f'Buy Fee: '
         f'{result["buy_fee"] * 100:.3f}%\n'
+
         f'Sell Fee: '
         f'{result["sell_fee"] * 100:.3f}%\n'
+
         "\n"
+
         "⚠️ Monitoring only\n"
         "No automatic trade executed."
     )
 
-    send_telegram(message)
+    send_telegram(
+        message
+    )
 
 
 # ============================================================
 # RANKING
 # ============================================================
 
-def print_ranking(results):
+def print_ranking(
+    results
+):
 
     if not results:
 
@@ -1608,8 +1992,7 @@ def print_ranking(results):
 
     print(
         "\n"
-        "============================="
-        "=============================="
+        "================================================"
     )
 
     print(
@@ -1617,8 +2000,7 @@ def print_ranking(results):
     )
 
     print(
-        "============================="
-        "=============================="
+        "================================================"
     )
 
     for index, result in enumerate(
@@ -1637,8 +2019,7 @@ def print_ranking(results):
         )
 
     print(
-        "============================="
-        "=============================="
+        "================================================"
     )
 
 
@@ -1646,7 +2027,9 @@ def print_ranking(results):
 # ONE MONITORING CYCLE
 # ============================================================
 
-def run_cycle(cycle_number):
+def run_cycle(
+    cycle_number
+):
 
     now = datetime.now().strftime(
         "%Y-%m-%d %H:%M:%S"
@@ -1656,23 +2039,31 @@ def run_cycle(cycle_number):
     print(
         "================================================"
     )
+
     print(
         f"MONITORING CYCLE #{cycle_number}"
     )
+
     print(
         f"CHECK: {now}"
     )
+
     print(
         "================================================"
     )
 
     markets = fetch_all_exchanges()
 
-    exchange_count = len(markets)
+    exchange_count = len(
+        markets
+    )
 
     route_count = (
         exchange_count
-        * (exchange_count - 1)
+        * (
+            exchange_count
+            - 1
+        )
     )
 
     print()
@@ -1689,7 +2080,8 @@ def run_cycle(cycle_number):
     if exchange_count < 2:
 
         print(
-            "WARNING | Not enough exchanges "
+            "WARNING | "
+            "Not enough exchanges "
             "for arbitrage calculation"
         )
 
@@ -1705,7 +2097,11 @@ def run_cycle(cycle_number):
 
         for sell_name in names:
 
-            if buy_name == sell_name:
+            if (
+                buy_name
+                == sell_name
+            ):
+
                 continue
 
             buy_market = markets[
@@ -1716,9 +2112,11 @@ def run_cycle(cycle_number):
                 sell_name
             ]
 
-            result = calculate_arbitrage(
-                buy_market,
-                sell_market
+            result = (
+                calculate_arbitrage(
+                    buy_market,
+                    sell_market
+                )
             )
 
             if result:
@@ -1727,13 +2125,13 @@ def run_cycle(cycle_number):
                     result
                 )
 
-                # Telegram alert only for
-                # positive results above threshold.
                 send_arbitrage_alert(
                     result
                 )
 
-    print_ranking(results)
+    print_ranking(
+        results
+    )
 
 
 # ============================================================
@@ -1753,7 +2151,10 @@ def run_continuous_monitoring():
             - start_time
         )
 
-        if elapsed >= MAX_RUNTIME_SECONDS:
+        if (
+            elapsed
+            >= MAX_RUNTIME_SECONDS
+        ):
 
             print()
             print(
@@ -1770,7 +2171,8 @@ def run_continuous_monitoring():
             )
 
             print(
-                "Stopping current GitHub Actions job."
+                "Stopping current "
+                "GitHub Actions job."
             )
 
             print(
@@ -1813,6 +2215,7 @@ def run_continuous_monitoring():
         )
 
         print()
+
         print(
             f"Next check in "
             f"{sleep_time:.0f} seconds..."
@@ -1903,19 +2306,27 @@ def main():
     print_startup()
 
     startup_message = (
+
         "🤖 ARBITRAGE BOT STARTED\n"
         "\n"
+
         "Market: USDT / TOMAN\n"
         "Exchanges: 6\n"
+
         "Trade Amount: "
         f"{TRADE_AMOUNT_TOMAN:,.0f} Toman\n"
+
         "Minimum Profit: "
         f"{MIN_PROFIT_PERCENT:.2f}%\n"
+
         "Interval: "
         f"{CHECK_INTERVAL_SECONDS} sec\n"
+
         "Order Type: "
         f"{ORDER_TYPE.upper()}\n"
+
         "\n"
+
         "Monitoring only.\n"
         "No automatic trading."
     )
@@ -1927,10 +2338,12 @@ def main():
     run_continuous_monitoring()
 
     print()
+
     print(
         "ARBITRAGE BOT FINISHED"
     )
 
 
 if __name__ == "__main__":
+
     main()
