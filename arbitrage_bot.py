@@ -18,11 +18,16 @@ USDT / TOMAN
 - تشخیص فرصت واقعی
 - بررسی پایداری فرصت‌ها در چند چرخه
 - پیشنهاد تخصیص سرمایه بر اساس داده چند چرخه
+- جلوگیری از تخصیص زودهنگام سرمایه
+- محدود کردن تمرکز سرمایه روی یک صرافی
 - هشدار تلگرام
 - گزارش فارسی
 - آمار روزانه / هفتگی / کل
 - اجرای مداوم
 - ساعت ایران
+
+MONITORING ONLY
+NO REAL TRADES
 ============================================================
 """
 
@@ -43,9 +48,10 @@ REQUEST_TIMEOUT = 15
 
 ORDERBOOK_LEVELS = 20
 
-# ------------------------------------------------------------
+
+# ============================================================
 # سرمایه کل قابل استفاده
-# ------------------------------------------------------------
+# ============================================================
 
 TOTAL_CAPITAL_TOMAN = int(
     os.environ.get(
@@ -54,9 +60,10 @@ TOTAL_CAPITAL_TOMAN = int(
     )
 )
 
-# ------------------------------------------------------------
+
+# ============================================================
 # حداکثر سرمایه مورد بررسی در هر فرصت
-# ------------------------------------------------------------
+# ============================================================
 
 MAX_TRADE_AMOUNT_TOMAN = int(
     os.environ.get(
@@ -65,9 +72,10 @@ MAX_TRADE_AMOUNT_TOMAN = int(
     )
 )
 
-# ------------------------------------------------------------
+
+# ============================================================
 # حداقل سود برای هشدار
-# ------------------------------------------------------------
+# ============================================================
 
 MIN_PROFIT_PERCENT = float(
     os.environ.get(
@@ -76,9 +84,10 @@ MIN_PROFIT_PERCENT = float(
     )
 )
 
-# ------------------------------------------------------------
+
+# ============================================================
 # فاصله بررسی
-# ------------------------------------------------------------
+# ============================================================
 
 CHECK_INTERVAL_SECONDS = int(
     os.environ.get(
@@ -87,9 +96,10 @@ CHECK_INTERVAL_SECONDS = int(
     )
 )
 
-# ------------------------------------------------------------
+
+# ============================================================
 # فاصله تکرار هشدار
-# ------------------------------------------------------------
+# ============================================================
 
 ALERT_COOLDOWN_SECONDS = int(
     os.environ.get(
@@ -98,9 +108,10 @@ ALERT_COOLDOWN_SECONDS = int(
     )
 )
 
-# ------------------------------------------------------------
+
+# ============================================================
 # مدت اجرای ربات
-# ------------------------------------------------------------
+# ============================================================
 
 MAX_RUNTIME_SECONDS = int(
     os.environ.get(
@@ -109,10 +120,11 @@ MAX_RUNTIME_SECONDS = int(
     )
 )
 
-# ------------------------------------------------------------
+
+# ============================================================
 # نوع کارمزد
 # maker / taker
-# ------------------------------------------------------------
+# ============================================================
 
 ORDER_TYPE = os.environ.get(
     "ORDER_TYPE",
@@ -130,16 +142,30 @@ if ORDER_TYPE not in (
 # تنظیمات تحلیل فرصت
 # ============================================================
 
-# چند چرخه اخیر برای تحلیل پایداری فرصت نگهداری شود
+# تعداد چرخه‌هایی که در حافظه نگهداری می‌شوند
 OPPORTUNITY_HISTORY_LIMIT = 60
 
-# حداقل تعداد مشاهده مثبت برای اینکه یک مسیر
-# در پیشنهاد تخصیص سرمایه وزن قابل توجه بگیرد
+
+# حداقل تعداد مشاهده برای تحلیل سرمایه
+MIN_ALLOCATION_OBSERVATIONS = int(
+    os.environ.get(
+        "MIN_ALLOCATION_OBSERVATIONS",
+        "50"
+    )
+)
+
+
+# حداقل تعداد مشاهده مثبت یک مسیر
+# برای اینکه بتواند در تخصیص سرمایه اثر بگذارد
 MIN_POSITIVE_OBSERVATIONS = 3
 
-# حداقل درصد حجم Order Book که باید قابل اجرا باشد
-# در صورت عدم تکمیل معامله، امتیاز فرصت کاهش پیدا می‌کند.
+
+# حداقل قابلیت اجرای Order Book
 MIN_EXECUTION_RATIO = 0.80
+
+
+# حداکثر سهم پیشنهادی یک صرافی
+MAX_EXCHANGE_ALLOCATION_PERCENT = 70.0
 
 
 # ============================================================
@@ -214,7 +240,7 @@ ENABLED_EXCHANGES = [
 SESSION = requests.Session()
 
 SESSION.headers.update({
-    "User-Agent": "Mozilla/5.0 ArbitrageBot/3.0",
+    "User-Agent": "Mozilla/5.0 ArbitrageBot/4.0",
     "Accept": "application/json",
 })
 
@@ -275,6 +301,22 @@ def safe_float(
     except Exception:
 
         return default
+
+
+# ============================================================
+# ساخت کلید استاندارد مسیر
+# ============================================================
+
+def make_route_key(
+    buy_exchange,
+    sell_exchange
+):
+
+    return (
+        f"{buy_exchange}"
+        "_"
+        f"{sell_exchange}"
+    )
 
 
 # ============================================================
@@ -622,7 +664,7 @@ def get_ramzinex_orderbook():
                 sells
             )
 
-            # قیمت Ramzinex در این Pair ریالی است
+            # Ramzinex در این Pair ریالی است
             # تبدیل ریال به تومان
 
             bids = [
@@ -964,7 +1006,6 @@ def calculate_route(
         * 100
     )
 
-    # نسبت اجرای واقعی دو طرف مسیر
     execution_ratio = min(
         buy_result[
             "execution_ratio"
@@ -1243,10 +1284,9 @@ def update_opportunity_history(
 
     for route in routes:
 
-        route_key = (
-            f"{route['buy_exchange']}"
-            "_"
-            f"{route['sell_exchange']}"
+        route_key = make_route_key(
+            route["buy_exchange"],
+            route["sell_exchange"]
         )
 
         snapshot[
@@ -1273,6 +1313,9 @@ def update_opportunity_history(
                     and
                     route["profit_percent"]
                     >= MIN_PROFIT_PERCENT
+                    and
+                    route["execution_ratio"]
+                    >= MIN_EXECUTION_RATIO
                 ),
         }
 
@@ -1289,6 +1332,23 @@ def update_opportunity_history(
                 -OPPORTUNITY_HISTORY_LIMIT:
             ]
         )
+
+
+# ============================================================
+# تعداد کل مشاهدات موجود در تاریخچه
+# ============================================================
+
+def get_total_history_observations():
+
+    total = 0
+
+    for snapshot in opportunity_history:
+
+        total += len(
+            snapshot
+        )
+
+    return total
 
 
 # ============================================================
@@ -1329,9 +1389,13 @@ def analyze_route_history(
 
             "average_profit_percent": 0,
 
+            "average_positive_profit_percent": 0,
+
             "average_net_profit": 0,
 
             "average_execution_ratio": 0,
+
+            "stability_score": 0,
 
             "score": 0,
         }
@@ -1352,6 +1416,16 @@ def analyze_route_history(
             for x in observations
         )
         / len(observations)
+    )
+
+    average_positive_profit = (
+        sum(
+            x["profit_percent"]
+            for x in positive
+        )
+        / len(positive)
+        if positive
+        else 0
     )
 
     average_net_profit = (
@@ -1381,14 +1455,7 @@ def analyze_route_history(
     )
 
     # --------------------------------------------------------
-    # امتیاز پایداری
-    #
-    # هدف:
-    # فرصت‌هایی که:
-    # - بیشتر تکرار شده‌اند
-    # - سود بیشتری داشته‌اند
-    # - حجم بیشتری را قابل اجرا کرده‌اند
-    # امتیاز بالاتری بگیرند.
+    # امتیاز ثبات
     # --------------------------------------------------------
 
     stability_score = (
@@ -1398,12 +1465,11 @@ def analyze_route_history(
         +
         min(
             max(
-                average_profit,
+                average_positive_profit,
                 0
             ),
             5
-        )
-        * 5
+        ) * 5
         +
         average_execution * 25
     )
@@ -1428,15 +1494,185 @@ def analyze_route_history(
         "average_profit_percent":
             average_profit,
 
+        "average_positive_profit_percent":
+            average_positive_profit,
+
         "average_net_profit":
             average_net_profit,
 
         "average_execution_ratio":
             average_execution,
 
+        "stability_score":
+            stability_score,
+
         "score":
             stability_score,
     }
+
+
+# ============================================================
+# محاسبه امتیاز مسیر برای تخصیص سرمایه
+# ============================================================
+
+def calculate_route_allocation_score(
+    route,
+    analysis
+):
+
+    observations = analysis[
+        "observations"
+    ]
+
+    positive_observations = analysis[
+        "positive_observations"
+    ]
+
+    if observations < MIN_ALLOCATION_OBSERVATIONS:
+
+        return 0.0
+
+    if (
+        positive_observations
+        < MIN_POSITIVE_OBSERVATIONS
+    ):
+
+        return 0.0
+
+    # --------------------------------------------------------
+    # نسبت سوددهی
+    # --------------------------------------------------------
+
+    positive_ratio = (
+        analysis["positive_ratio"]
+    )
+
+    # --------------------------------------------------------
+    # نسبت رسیدن به حداقل سود
+    # --------------------------------------------------------
+
+    qualified_ratio = (
+        analysis["qualified_ratio"]
+    )
+
+    # --------------------------------------------------------
+    # سود متوسط فرصت‌های مثبت
+    # --------------------------------------------------------
+
+    average_profit = max(
+        analysis[
+            "average_positive_profit_percent"
+        ],
+        0
+    )
+
+    profit_factor = min(
+        average_profit / 3.0,
+        1.0
+    )
+
+    # --------------------------------------------------------
+    # نقدشوندگی / قابلیت اجرا
+    # --------------------------------------------------------
+
+    execution_factor = min(
+        max(
+            analysis[
+                "average_execution_ratio"
+            ],
+            0
+        ),
+        1
+    )
+
+    # --------------------------------------------------------
+    # سود فعلی
+    # --------------------------------------------------------
+
+    current_profit_factor = min(
+        max(
+            route["profit_percent"] / 3.0,
+            0
+        ),
+        1
+    )
+
+    # --------------------------------------------------------
+    # ثبات
+    # --------------------------------------------------------
+
+    stability_factor = min(
+        max(
+            analysis[
+                "stability_score"
+            ] / 100.0,
+            0
+        ),
+        1
+    )
+
+    # --------------------------------------------------------
+    # ترکیب نهایی
+    #
+    # عمداً هیچ عامل واحدی تعیین‌کننده نیست.
+    # --------------------------------------------------------
+
+    score = (
+
+        positive_ratio
+        * 0.20
+
+        +
+
+        qualified_ratio
+        * 0.25
+
+        +
+
+        profit_factor
+        * 0.20
+
+        +
+
+        execution_factor
+        * 0.15
+
+        +
+
+        stability_factor
+        * 0.10
+
+        +
+
+        current_profit_factor
+        * 0.10
+    )
+
+    # --------------------------------------------------------
+    # تعداد مشاهده بیشتر = اعتماد بیشتر
+    # ولی با سقف 1
+    # --------------------------------------------------------
+
+    observation_confidence = min(
+        observations
+        / (
+            MIN_ALLOCATION_OBSERVATIONS
+            * 2
+        ),
+        1.0
+    )
+
+    score *= (
+        0.70
+        +
+        0.30
+        * observation_confidence
+    )
+
+    return max(
+        score,
+        0
+    )
 
 
 # ============================================================
@@ -1452,142 +1688,281 @@ def calculate_capital_allocation(
     این تابع موجودی واقعی صرافی‌ها را نمی‌داند.
 
     فقط بر اساس رفتار مشاهده‌شده بازار،
-    یک پیشنهاد برای محل مناسب‌تر تأمین سرمایه
-    ارائه می‌دهد.
+    یک پیشنهاد تحلیلی برای محل مناسب‌تر
+    تأمین سرمایه ارائه می‌دهد.
 
     این پیشنهاد دستور معامله نیست.
     """
 
-    scores = {
+    total_history = (
+        get_total_history_observations()
+    )
+
+    # --------------------------------------------------------
+    # قبل از رسیدن به حداقل داده:
+    # هیچ تخصیص عددی تولید نمی‌شود.
+    # --------------------------------------------------------
+
+    if (
+        total_history
+        < MIN_ALLOCATION_OBSERVATIONS
+    ):
+
+        return {
+
+            "ready": False,
+
+            "reason":
+                "داده کافی نیست",
+
+            "total_history":
+                total_history,
+
+            "required_history":
+                MIN_ALLOCATION_OBSERVATIONS,
+
+            "allocation": {
+                exchange: 0
+                for exchange
+                in ENABLED_EXCHANGES
+            },
+        }
+
+    exchange_scores = {
         exchange: 0.0
         for exchange
         in ENABLED_EXCHANGES
     }
 
-    route_analysis = []
+    route_scores = []
 
     for route in routes:
 
         if route["net_profit"] <= 0:
             continue
 
-        route_key = (
-            f"{route['buy_exchange']}"
-            "_"
-            f"{route['sell_exchange']}"
+        route_key = make_route_key(
+            route["buy_exchange"],
+            route["sell_exchange"]
         )
 
         analysis = analyze_route_history(
             route_key
         )
 
-        # اگر هنوز داده کافی نداریم،
-        # فرصت را با احتیاط وزن می‌دهیم.
-        observation_factor = min(
-            analysis["observations"]
-            / MIN_POSITIVE_OBSERVATIONS,
-            1.0
+        score = calculate_route_allocation_score(
+            route,
+            analysis
         )
 
-        execution_factor = max(
-            min(
-                route["execution_ratio"],
-                1.0
-            ),
-            0
-        )
-
-        profit_factor = max(
-            route["profit_percent"],
-            0
-        )
-
-        # سود فعلی + پایداری + قابلیت اجرا
-        current_quality = (
-            profit_factor
-            * (
-                0.40
-                +
-                0.60
-                * observation_factor
-            )
-            * (
-                0.50
-                +
-                0.50
-                * execution_factor
-            )
-        )
-
-        stability_quality = (
-            analysis["score"]
-            * 0.03
-        )
-
-        final_score = (
-            current_quality
-            +
-            stability_quality
-        )
-
-        if final_score <= 0:
+        if score <= 0:
             continue
 
-        route_analysis.append(
+        route_scores.append(
             (
                 route,
                 analysis,
-                final_score
+                score
             )
         )
 
-        # صرافی خرید اهمیت بیشتری دارد،
-        # چون برای شروع مسیر به سرمایه تومانی
-        # نیاز داریم.
-        scores[
-            route["buy_exchange"]
-        ] += final_score
+        # ----------------------------------------------------
+        # سمت خرید اهمیت بیشتری دارد،
+        # چون سرمایه تومانی برای شروع مسیر لازم است.
+        # ----------------------------------------------------
 
-        # صرافی فروش نیز برای داشتن USDT
-        # در سمت مقصد اهمیت دارد.
-        scores[
+        exchange_scores[
+            route["buy_exchange"]
+        ] += (
+            score * 0.60
+        )
+
+        # سمت فروش نیز اهمیت دارد.
+        exchange_scores[
             route["sell_exchange"]
         ] += (
-            final_score
-            * 0.50
+            score * 0.40
         )
 
     total_score = sum(
-        scores.values()
+        exchange_scores.values()
     )
 
     if total_score <= 0:
 
         return {
 
-            exchange: 0
-            for exchange
-            in ENABLED_EXCHANGES
+            "ready": True,
+
+            "reason":
+                "مسیر پایدار و مثبت کافی وجود ندارد",
+
+            "total_history":
+                total_history,
+
+            "required_history":
+                MIN_ALLOCATION_OBSERVATIONS,
+
+            "allocation": {
+                exchange: 0
+                for exchange
+                in ENABLED_EXCHANGES
+            },
+
+            "route_scores":
+                route_scores,
         }
 
     # --------------------------------------------------------
-    # تخصیص اولیه
+    # سهم اولیه
     # --------------------------------------------------------
+
+    raw_percentages = {}
+
+    for exchange in ENABLED_EXCHANGES:
+
+        raw_percentages[
+            exchange
+        ] = (
+            exchange_scores[exchange]
+            / total_score
+            * 100
+        )
+
+    # --------------------------------------------------------
+    # اعمال سقف تمرکز
+    # --------------------------------------------------------
+
+    capped = {}
+
+    excess = 0.0
+
+    for exchange in ENABLED_EXCHANGES:
+
+        percentage = raw_percentages[
+            exchange
+        ]
+
+        if (
+            percentage
+            > MAX_EXCHANGE_ALLOCATION_PERCENT
+        ):
+
+            capped[
+                exchange
+            ] = MAX_EXCHANGE_ALLOCATION_PERCENT
+
+            excess += (
+                percentage
+                - MAX_EXCHANGE_ALLOCATION_PERCENT
+            )
+
+        else:
+
+            capped[
+                exchange
+            ] = percentage
+
+    # --------------------------------------------------------
+    # توزیع مقدار اضافی بین صرافی‌هایی
+    # که هنوز به سقف نرسیده‌اند.
+    # --------------------------------------------------------
+
+    for _ in range(10):
+
+        if excess <= 0.0001:
+            break
+
+        available = [
+            exchange
+            for exchange
+            in ENABLED_EXCHANGES
+            if capped[exchange]
+            < MAX_EXCHANGE_ALLOCATION_PERCENT
+        ]
+
+        if not available:
+            break
+
+        available_score = sum(
+            max(
+                exchange_scores[exchange],
+                0
+            )
+            for exchange
+            in available
+        )
+
+        if available_score <= 0:
+            break
+
+        distributed = 0.0
+
+        for exchange in available:
+
+            room = (
+                MAX_EXCHANGE_ALLOCATION_PERCENT
+                - capped[exchange]
+            )
+
+            if room <= 0:
+                continue
+
+            share = (
+                excess
+                *
+                (
+                    exchange_scores[exchange]
+                    / available_score
+                )
+            )
+
+            add = min(
+                share,
+                room
+            )
+
+            capped[
+                exchange
+            ] += add
+
+            distributed += add
+
+        if distributed <= 0:
+            break
+
+        excess -= distributed
+
+    # --------------------------------------------------------
+    # نرمال‌سازی نهایی
+    # --------------------------------------------------------
+
+    percentage_total = sum(
+        capped.values()
+    )
+
+    if percentage_total > 0:
+
+        for exchange in ENABLED_EXCHANGES:
+
+            capped[
+                exchange
+            ] = (
+                capped[exchange]
+                / percentage_total
+                * 100
+            )
 
     allocation = {}
 
     for exchange in ENABLED_EXCHANGES:
 
-        share = (
-            scores[exchange]
-            / total_score
-        )
-
         allocation[
             exchange
         ] = int(
             total_capital
-            * share
+            * capped[exchange]
+            / 100
         )
 
     # --------------------------------------------------------
@@ -1603,13 +1978,45 @@ def calculate_capital_allocation(
         - allocated
     )
 
-    if ENABLED_EXCHANGES:
+    if difference != 0:
+
+        # اختلاف به صرافی دارای بیشترین سهم
+        # اضافه می‌شود.
+        target_exchange = max(
+            ENABLED_EXCHANGES,
+            key=lambda x:
+                allocation[x]
+        )
 
         allocation[
-            ENABLED_EXCHANGES[0]
+            target_exchange
         ] += difference
 
-    return allocation
+    return {
+
+        "ready": True,
+
+        "reason":
+            "تحلیل انجام شد",
+
+        "total_history":
+            total_history,
+
+        "required_history":
+            MIN_ALLOCATION_OBSERVATIONS,
+
+        "allocation":
+            allocation,
+
+        "percentages":
+            capped,
+
+        "exchange_scores":
+            exchange_scores,
+
+        "route_scores":
+            route_scores,
+    }
 
 
 # ============================================================
@@ -1620,59 +2027,100 @@ def print_capital_allocation(
     routes
 ):
 
-    allocation = (
-        calculate_capital_allocation(
-            routes,
-            TOTAL_CAPITAL_TOMAN
-        )
+    result = calculate_capital_allocation(
+        routes,
+        TOTAL_CAPITAL_TOMAN
     )
 
     print()
 
     print(
-        "========== پیشنهاد تخصیص سرمایه =========="
+        "========== تحلیل تخصیص سرمایه =========="
     )
 
     print(
-        f"سرمایه کل قابل استفاده: "
+        f"سرمایه کل: "
         f"{format_toman(TOTAL_CAPITAL_TOMAN)} تومان"
     )
 
-    print()
+    print(
+        f"مشاهدات فعلی: "
+        f"{result['total_history']}"
+        " / "
+        f"{result['required_history']}"
+    )
 
-    if not any(
-        allocation.values()
-    ):
+    # --------------------------------------------------------
+    # هنوز داده کافی نیست
+    # --------------------------------------------------------
+
+    if not result["ready"]:
+
+        print()
 
         print(
-            "فعلاً داده کافی برای پیشنهاد "
-            "تخصیص سرمایه وجود ندارد."
+            "⏳ هنوز داده کافی برای پیشنهاد عددی وجود ندارد."
         )
 
         print(
-            "ربات ترجیح می‌دهد بدون داده کافی "
-            "پیشنهاد عددی ندهد."
+            "ربات فعلاً فقط فرصت‌ها را جمع‌آوری و تحلیل می‌کند."
+        )
+
+        print(
+            "این کار عمداً انجام شده تا تخصیص سرمایه "
+            "بر اساس چند مشاهده محدود نباشد."
         )
 
         print(
             "=========================================="
         )
 
-        return allocation
+        return result
+
+    # --------------------------------------------------------
+    # داده کافی هست ولی مسیر مناسبی نیست
+    # --------------------------------------------------------
+
+    if not any(
+        result[
+            "allocation"
+        ].values()
+    ):
+
+        print()
+
+        print(
+            "ℹ️ با وجود داده کافی، فعلاً مسیر "
+            "پایدار و مثبت مناسبی برای تخصیص پیدا نشد."
+        )
+
+        print(
+            "=========================================="
+        )
+
+        return result
+
+    print()
+
+    print(
+        "📊 پیشنهاد فعلی:"
+    )
 
     for exchange in ENABLED_EXCHANGES:
 
-        amount = allocation.get(
+        amount = result[
+            "allocation"
+        ].get(
             exchange,
             0
         )
 
-        percentage = (
-            amount
-            / TOTAL_CAPITAL_TOMAN
-            * 100
-            if TOTAL_CAPITAL_TOMAN > 0
-            else 0
+        percentage = result.get(
+            "percentages",
+            {}
+        ).get(
+            exchange,
+            0
         )
 
         print(
@@ -1684,13 +2132,17 @@ def print_capital_allocation(
     print()
 
     print(
-        "ℹ️ این پیشنهاد بر اساس داده‌های "
-        "مشاهده‌شده چند چرخه اخیر است."
+        "📌 سقف تمرکز هر صرافی: "
+        f"{MAX_EXCHANGE_ALLOCATION_PERCENT:.0f}%"
     )
 
     print(
-        "⚠️ موجودی واقعی صرافی‌ها در محاسبه "
-        "وارد نشده است."
+        "ℹ️ این پیشنهاد بر اساس تکرار فرصت، "
+        "سود، ثبات و نقدشوندگی است."
+    )
+
+    print(
+        "⚠️ موجودی واقعی صرافی‌ها در محاسبه وارد نشده."
     )
 
     print(
@@ -1701,7 +2153,7 @@ def print_capital_allocation(
         "=========================================="
     )
 
-    return allocation
+    return result
 
 
 # ============================================================
@@ -1770,10 +2222,9 @@ def send_arbitrage_alert(
         route["sell_exchange"]
     )
 
-    route_key = (
-        f"{buy_exchange}_"
-        f"به_"
-        f"{sell_exchange}"
+    route_key = make_route_key(
+        buy_exchange,
+        sell_exchange
     )
 
     current_time = time.time()
@@ -1791,7 +2242,7 @@ def send_arbitrage_alert(
         < ALERT_COOLDOWN_SECONDS
     ):
 
-        return
+        return False
 
     profit = route[
         "net_profit"
@@ -1802,14 +2253,21 @@ def send_arbitrage_alert(
     ]
 
     if profit <= 0:
-        return
+        return False
 
     if (
         profit_percent
         < MIN_PROFIT_PERCENT
     ):
 
-        return
+        return False
+
+    if (
+        route["execution_ratio"]
+        < MIN_EXECUTION_RATIO
+    ):
+
+        return False
 
     history = analyze_route_history(
         route_key
@@ -1846,7 +2304,10 @@ def send_arbitrage_alert(
         f"{history['observations']}\n"
 
         f"تعداد مشاهده سودده: "
-        f"{history['positive_observations']}\n\n"
+        f"{history['positive_observations']}\n"
+
+        f"تعداد رسیدن به حداقل سود: "
+        f"{history['qualified_observations']}\n\n"
 
         f"کارمزد خرید: "
         f"{route['buy_fee'] * 100:.3f}%\n"
@@ -1865,6 +2326,10 @@ def send_arbitrage_alert(
         last_alert_time[
             route_key
         ] = current_time
+
+        return True
+
+    return False
 
 
 # ============================================================
@@ -2014,10 +2479,6 @@ def update_stats(
             "alerts": 0,
         }
 
-    # --------------------------------------------------------
-    # هر route که بررسی شده
-    # --------------------------------------------------------
-
     route_count = len(
         routes
     )
@@ -2037,10 +2498,6 @@ def update_stats(
     ][week][
         "route_checks"
     ] += route_count
-
-    # --------------------------------------------------------
-    # فرصت‌های مثبت و واجد شرایط
-    # --------------------------------------------------------
 
     for route in routes:
 
@@ -2107,6 +2564,73 @@ def update_stats(
             ][week][
                 "simulated_profit_toman"
             ] += profit
+
+    save_stats(
+        stats
+    )
+
+
+# ============================================================
+# ثبت هشدار در آمار
+# ============================================================
+
+def record_alert_stat(
+    stats
+):
+
+    today = now_tehran().strftime(
+        "%Y-%m-%d"
+    )
+
+    week = now_tehran().strftime(
+        "%Y-W%W"
+    )
+
+    if today not in stats["daily"]:
+
+        stats["daily"][today] = {
+
+            "route_checks": 0,
+
+            "positive": 0,
+
+            "qualified": 0,
+
+            "simulated_profit_toman": 0,
+
+            "alerts": 0,
+        }
+
+    if week not in stats["weekly"]:
+
+        stats["weekly"][week] = {
+
+            "route_checks": 0,
+
+            "positive": 0,
+
+            "qualified": 0,
+
+            "simulated_profit_toman": 0,
+
+            "alerts": 0,
+        }
+
+    stats[
+        "total_alerts"
+    ] += 1
+
+    stats[
+        "daily"
+    ][today][
+        "alerts"
+    ] += 1
+
+    stats[
+        "weekly"
+    ][week][
+        "alerts"
+    ] += 1
 
     save_stats(
         stats
@@ -2205,6 +2729,9 @@ def send_periodic_report(
         f"فرصت‌های واجد شرایط: "
         f"{daily['qualified']}\n"
 
+        f"هشدارهای ارسال‌شده: "
+        f"{daily['alerts']}\n"
+
         f"سود شبیه‌سازی‌شده: "
         f"{format_toman(daily['simulated_profit_toman'])} تومان\n\n"
 
@@ -2219,6 +2746,9 @@ def send_periodic_report(
         f"فرصت‌های واجد شرایط: "
         f"{weekly['qualified']}\n"
 
+        f"هشدارهای ارسال‌شده: "
+        f"{weekly['alerts']}\n"
+
         f"سود شبیه‌سازی‌شده: "
         f"{format_toman(weekly['simulated_profit_toman'])} تومان\n\n"
 
@@ -2232,6 +2762,9 @@ def send_periodic_report(
 
         f"فرصت‌های واجد شرایط: "
         f"{stats['total_qualified_opportunities']}\n"
+
+        f"هشدارهای ارسال‌شده: "
+        f"{stats['total_alerts']}\n"
 
         f"سود شبیه‌سازی‌شده کل: "
         f"{format_toman(stats['total_simulated_profit_toman'])} تومان\n\n"
@@ -2277,8 +2810,15 @@ def send_startup_message():
         f"نوع کارمزد: "
         f"{ORDER_TYPE}\n\n"
 
+        f"حداقل داده برای تحلیل سرمایه: "
+        f"{MIN_ALLOCATION_OBSERVATIONS} مشاهده\n"
+
+        f"حداکثر تمرکز روی یک صرافی: "
+        f"{MAX_EXCHANGE_ALLOCATION_PERCENT:.0f}%\n\n"
+
         "تحلیل سرمایه:\n"
-        "بر اساس تکرار فرصت + سود + نقدشوندگی\n\n"
+        "بر اساس تکرار فرصت + سود + نقدشوندگی "
+        "+ ثبات + قابلیت اجرا\n\n"
 
         "منطقه زمانی: تهران"
     )
@@ -2335,6 +2875,16 @@ def main():
     print(
         f"💳 نوع کارمزد: "
         f"{ORDER_TYPE}"
+    )
+
+    print(
+        f"📊 حداقل مشاهده برای تخصیص سرمایه: "
+        f"{MIN_ALLOCATION_OBSERVATIONS}"
+    )
+
+    print(
+        f"🛑 حداکثر تمرکز یک صرافی: "
+        f"{MAX_EXCHANGE_ALLOCATION_PERCENT:.0f}%"
     )
 
     print(
@@ -2413,7 +2963,7 @@ def main():
             )
 
             # ------------------------------------------------
-            # ثبت تاریخچه قبل از تحلیل تخصیص
+            # ثبت تاریخچه
             # ------------------------------------------------
 
             update_opportunity_history(
@@ -2459,10 +3009,9 @@ def main():
                     f"{best_route['execution_ratio'] * 100:.1f}%"
                 )
 
-                route_key = (
-                    f"{best_route['buy_exchange']}"
-                    "_"
-                    f"{best_route['sell_exchange']}"
+                route_key = make_route_key(
+                    best_route["buy_exchange"],
+                    best_route["sell_exchange"]
                 )
 
                 history = analyze_route_history(
@@ -2500,9 +3049,15 @@ def main():
                         "و حداقل قابلیت اجرای تعیین‌شده رسیده است."
                     )
 
-                    send_arbitrage_alert(
+                    alert_sent = send_arbitrage_alert(
                         best_route
                     )
+
+                    if alert_sent:
+
+                        record_alert_stat(
+                            stats
+                        )
 
                 else:
 
@@ -2512,7 +3067,7 @@ def main():
                     )
 
             # ------------------------------------------------
-            # پیشنهاد تخصیص سرمایه
+            # تحلیل تخصیص سرمایه
             # ------------------------------------------------
 
             print_capital_allocation(
