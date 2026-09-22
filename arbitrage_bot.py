@@ -1,191 +1,104 @@
 """
 ============================================================
-ربات مانیتورینگ آربیتراژ
+ARBITRAGE MONITORING BOT
 Wallex + BitPin + Ramzinex
 
 USDT / TOMAN
 
-فقط مانیتورینگ
-بدون معامله واقعی
-
-امکانات:
-- بررسی Order Book
-- استفاده از Ask برای خرید
-- استفاده از Bid برای فروش
-- درنظر گرفتن عمق Order Book
-- محاسبه کارمزد Maker / Taker
-- محاسبه سود خالص
-- تشخیص فرصت واقعی
-- بررسی پایداری فرصت‌ها در چند چرخه
-- پیشنهاد تخصیص سرمایه بر اساس داده چند چرخه
-- جلوگیری از تخصیص زودهنگام سرمایه
-- محدود کردن تمرکز سرمایه روی یک صرافی
-- هشدار تلگرام
-- گزارش فارسی
-- آمار روزانه / هفتگی / کل
-- اجرای مداوم
-- ساعت ایران
-
 MONITORING ONLY
 NO REAL TRADES
+
+FEATURES:
+- Order Book
+- Ask for buy / Bid for sell
+- Order Book depth
+- Maker / Taker fees
+- Net profit calculation
+- Telegram capital selection
+- Custom capital input
+- Detailed Telegram status
+- Periodic report every 2 hours
+- No periodic reports from 23:00 to 08:00
+- Report cycle starts from 18:00
+- Telegram /status command
+- Arbitrage alerts
+- Daily / weekly / total statistics
 ============================================================
 """
 
 import os
-import time
 import json
-from datetime import datetime
+import time
+import threading
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import requests
 
 
 # ============================================================
-# تنظیمات اصلی
+# SETTINGS
 # ============================================================
 
 REQUEST_TIMEOUT = 15
-
 ORDERBOOK_LEVELS = 20
 
-
-# ============================================================
-# سرمایه کل قابل استفاده
-# ============================================================
-
-TOTAL_CAPITAL_TOMAN = int(
-    os.environ.get(
-        "TOTAL_CAPITAL_TOMAN",
-        "200000000"
-    )
-)
-
-
-# ============================================================
-# حداکثر سرمایه مورد بررسی در هر فرصت
-# ============================================================
-
-MAX_TRADE_AMOUNT_TOMAN = int(
-    os.environ.get(
-        "MAX_TRADE_AMOUNT_TOMAN",
-        "50000000"
-    )
-)
-
-
-# ============================================================
-# حداقل سود برای هشدار
-# ============================================================
-
 MIN_PROFIT_PERCENT = float(
-    os.environ.get(
-        "MIN_SPREAD_PERCENT",
-        "1.5"
-    )
+    os.environ.get("MIN_SPREAD_PERCENT", "1.5")
 )
-
-
-# ============================================================
-# فاصله بررسی
-# ============================================================
 
 CHECK_INTERVAL_SECONDS = int(
-    os.environ.get(
-        "CHECK_INTERVAL_SECONDS",
-        "10"
-    )
+    os.environ.get("CHECK_INTERVAL_SECONDS", "10")
 )
-
-
-# ============================================================
-# فاصله تکرار هشدار
-# ============================================================
 
 ALERT_COOLDOWN_SECONDS = int(
-    os.environ.get(
-        "ALERT_COOLDOWN_SECONDS",
-        "60"
-    )
+    os.environ.get("ALERT_COOLDOWN_SECONDS", "60")
 )
-
-
-# ============================================================
-# مدت اجرای ربات
-# ============================================================
 
 MAX_RUNTIME_SECONDS = int(
-    os.environ.get(
-        "MAX_RUNTIME_SECONDS",
-        "20700"
-    )
+    os.environ.get("MAX_RUNTIME_SECONDS", "20700")
 )
-
-
-# ============================================================
-# نوع کارمزد
-# maker / taker
-# ============================================================
 
 ORDER_TYPE = os.environ.get(
     "ORDER_TYPE",
     "taker"
 ).lower()
 
-if ORDER_TYPE not in (
-    "maker",
-    "taker"
-):
+if ORDER_TYPE not in ("maker", "taker"):
     ORDER_TYPE = "taker"
 
 
 # ============================================================
-# تنظیمات تحلیل فرصت
+# ANALYSIS SETTINGS
 # ============================================================
 
-# تعداد چرخه‌هایی که در حافظه نگهداری می‌شوند
-OPPORTUNITY_HISTORY_LIMIT = 60
-
-
-# حداقل تعداد مشاهده برای تحلیل سرمایه
-MIN_ALLOCATION_OBSERVATIONS = int(
-    os.environ.get(
-        "MIN_ALLOCATION_OBSERVATIONS",
-        "50"
-    )
-)
-
-
-# حداقل تعداد مشاهده مثبت یک مسیر
-# برای اینکه بتواند در تخصیص سرمایه اثر بگذارد
-MIN_POSITIVE_OBSERVATIONS = 3
-
-
-# حداقل قابلیت اجرای Order Book
 MIN_EXECUTION_RATIO = 0.80
 
+OPPORTUNITY_HISTORY_LIMIT = 60
 
-# حداکثر سهم پیشنهادی یک صرافی
-MAX_EXCHANGE_ALLOCATION_PERCENT = 70.0
+MIN_ALLOCATION_OBSERVATIONS = 50
+
+MIN_POSITIVE_OBSERVATIONS = 3
+
+MAX_EXCHANGE_ALLOCATION_PERCENT = 0.70
 
 
 # ============================================================
-# فایل آمار
+# FILES
 # ============================================================
 
 STATS_FILE = "arbitrage_stats.json"
 
 
 # ============================================================
-# منطقه زمانی ایران
+# TIMEZONE
 # ============================================================
 
-TEHRAN_TZ = ZoneInfo(
-    "Asia/Tehran"
-)
+TEHRAN_TZ = ZoneInfo("Asia/Tehran")
 
 
 # ============================================================
-# تلگرام
+# TELEGRAM
 # ============================================================
 
 TELEGRAM_BOT_TOKEN = os.environ.get(
@@ -200,7 +113,7 @@ TELEGRAM_CHAT_ID = os.environ.get(
 
 
 # ============================================================
-# کارمزد صرافی‌ها
+# FEES
 # ============================================================
 
 FEES = {
@@ -223,7 +136,7 @@ FEES = {
 
 
 # ============================================================
-# صرافی‌های فعال
+# ENABLED EXCHANGES
 # ============================================================
 
 ENABLED_EXCHANGES = [
@@ -234,39 +147,46 @@ ENABLED_EXCHANGES = [
 
 
 # ============================================================
-# Session
+# SESSION
 # ============================================================
 
 SESSION = requests.Session()
 
 SESSION.headers.update({
-    "User-Agent": "Mozilla/5.0 ArbitrageBot/4.0",
+    "User-Agent": "Mozilla/5.0 ArbitrageBot/6.0",
     "Accept": "application/json",
 })
 
 
 # ============================================================
-# وضعیت داخلی
+# GLOBAL STATE
 # ============================================================
+
+runtime_start = time.time()
 
 last_alert_time = {}
 
 exchange_error_state = {}
 
-runtime_start = time.time()
+last_report_key = None
 
-last_report_minute = None
+telegram_update_offset = None
 
+waiting_for_custom_capital = False
 
-# ============================================================
-# تاریخچه فرصت‌ها
-# ============================================================
+selected_capital_toman = None
+
+latest_orderbooks = {}
+
+latest_routes = []
 
 opportunity_history = []
 
+state_lock = threading.Lock()
+
 
 # ============================================================
-# توابع عمومی
+# BASIC FUNCTIONS
 # ============================================================
 
 def now_tehran():
@@ -289,48 +209,33 @@ def format_percent(value):
     return f"{value:.3f}%"
 
 
-def safe_float(
-    value,
-    default=0.0
-):
-
-    try:
-
-        return float(value)
-
-    except Exception:
-
-        return default
-
-
-# ============================================================
-# ساخت کلید استاندارد مسیر
-# ============================================================
-
-def make_route_key(
-    buy_exchange,
-    sell_exchange
-):
+def normalize_digits(text):
 
     return (
-        f"{buy_exchange}"
-        "_"
-        f"{sell_exchange}"
+        str(text)
+        .replace("۰", "0")
+        .replace("۱", "1")
+        .replace("۲", "2")
+        .replace("۳", "3")
+        .replace("۴", "4")
+        .replace("۵", "5")
+        .replace("۶", "6")
+        .replace("۷", "7")
+        .replace("۸", "8")
+        .replace("۹", "9")
     )
 
 
 # ============================================================
-# نرمال‌سازی Order Book
+# ORDER BOOK NORMALIZATION
 # ============================================================
 
 def normalize_orderbook(data):
 
     result = []
 
-    if not isinstance(
-        data,
-        list
-    ):
+    if not isinstance(data, list):
+
         return result
 
     for item in data:
@@ -343,6 +248,7 @@ def normalize_orderbook(data):
             ):
 
                 if len(item) < 2:
+
                     continue
 
                 price = float(
@@ -405,7 +311,7 @@ def normalize_orderbook(data):
 
 
 # ============================================================
-# مدیریت خطای صرافی
+# EXCHANGE ERROR
 # ============================================================
 
 def report_exchange_error(
@@ -421,19 +327,10 @@ def report_exchange_error(
 
     if previous:
 
-        previous_message = previous.get(
-            "message"
-        )
-
-        previous_time = previous.get(
-            "time",
-            0
-        )
-
         if (
-            previous_message == message
+            previous["message"] == message
             and
-            current - previous_time < 60
+            current - previous["time"] < 60
         ):
 
             return
@@ -441,8 +338,12 @@ def report_exchange_error(
     exchange_error_state[
         exchange
     ] = {
-        "message": message,
-        "time": current,
+
+        "message":
+            message,
+
+        "time":
+            current,
     }
 
     print(
@@ -508,9 +409,15 @@ def get_wallex_orderbook():
             )
 
         return {
-            "exchange": "Wallex",
-            "asks": asks,
-            "bids": bids,
+
+            "exchange":
+                "Wallex",
+
+            "asks":
+                asks,
+
+            "bids":
+                bids,
         }
 
     except Exception as e:
@@ -570,9 +477,15 @@ def get_bitpin_orderbook():
             )
 
         return {
-            "exchange": "BitPin",
-            "asks": asks,
-            "bids": bids,
+
+            "exchange":
+                "BitPin",
+
+            "asks":
+                asks,
+
+            "bids":
+                bids,
         }
 
     except Exception as e:
@@ -627,6 +540,7 @@ def get_ramzinex_orderbook():
             )
 
             buys = []
+
             sells = []
 
             if isinstance(
@@ -664,8 +578,8 @@ def get_ramzinex_orderbook():
                 sells
             )
 
-            # Ramzinex در این Pair ریالی است
-            # تبدیل ریال به تومان
+            # Ramzinex Pair 11 is IRR.
+            # Convert Rial to Toman.
 
             bids = [
                 (
@@ -690,9 +604,15 @@ def get_ramzinex_orderbook():
             ):
 
                 return {
-                    "exchange": "Ramzinex",
-                    "asks": asks,
-                    "bids": bids,
+
+                    "exchange":
+                        "Ramzinex",
+
+                    "asks":
+                        asks,
+
+                    "bids":
+                        bids,
                 }
 
         except Exception as e:
@@ -706,7 +626,7 @@ def get_ramzinex_orderbook():
 
 
 # ============================================================
-# دریافت Order Book همه صرافی‌ها
+# GET ALL ORDER BOOKS
 # ============================================================
 
 def get_all_orderbooks():
@@ -732,6 +652,7 @@ def get_all_orderbooks():
         )
 
         if function is None:
+
             continue
 
         result = function()
@@ -746,7 +667,7 @@ def get_all_orderbooks():
 
 
 # ============================================================
-# کارمزد
+# FEES
 # ============================================================
 
 def get_fee(exchange):
@@ -756,21 +677,14 @@ def get_fee(exchange):
         {}
     )
 
-    if ORDER_TYPE == "maker":
-
-        return exchange_fees.get(
-            "maker",
-            0
-        )
-
     return exchange_fees.get(
-        "taker",
+        ORDER_TYPE,
         0
     )
 
 
 # ============================================================
-# خرید از Ask ها
+# BUY FROM ASKS
 # ============================================================
 
 def calculate_buy(
@@ -790,6 +704,7 @@ def calculate_buy(
     for price, volume in asks:
 
         if remaining_toman <= 0:
+
             break
 
         max_cost = (
@@ -812,6 +727,7 @@ def calculate_buy(
         remaining_toman -= cost
 
     if spent_toman <= 0:
+
         return None
 
     usdt_after_fee = (
@@ -836,9 +752,6 @@ def calculate_buy(
         "spent_toman":
             spent_toman,
 
-        "usdt_before_fee":
-            received_usdt,
-
         "usdt":
             usdt_after_fee,
 
@@ -854,7 +767,7 @@ def calculate_buy(
 
 
 # ============================================================
-# فروش به Bid ها
+# SELL TO BIDS
 # ============================================================
 
 def calculate_sell(
@@ -874,6 +787,7 @@ def calculate_sell(
     for price, volume in bids:
 
         if remaining_usdt <= 0:
+
             break
 
         amount = min(
@@ -890,6 +804,7 @@ def calculate_sell(
         remaining_usdt -= amount
 
     if sold_usdt <= 0:
+
         return None
 
     received_after_fee = (
@@ -917,9 +832,6 @@ def calculate_sell(
         "received_toman":
             received_after_fee,
 
-        "received_before_fee":
-            received_toman,
-
         "average_price":
             average_price,
 
@@ -932,7 +844,7 @@ def calculate_sell(
 
 
 # ============================================================
-# محاسبه یک مسیر آربیتراژ
+# CALCULATE ROUTE
 # ============================================================
 
 def calculate_route(
@@ -973,6 +885,7 @@ def calculate_route(
     )
 
     if not buy_result:
+
         return None
 
     sell_result = calculate_sell(
@@ -982,6 +895,7 @@ def calculate_route(
     )
 
     if not sell_result:
+
         return None
 
     actual_spent = (
@@ -993,6 +907,7 @@ def calculate_route(
     )
 
     if actual_spent <= 0:
+
         return None
 
     net_profit = (
@@ -1007,12 +922,8 @@ def calculate_route(
     )
 
     execution_ratio = min(
-        buy_result[
-            "execution_ratio"
-        ],
-        sell_result[
-            "execution_ratio"
-        ]
+        buy_result["execution_ratio"],
+        sell_result["execution_ratio"]
     )
 
     return {
@@ -1024,14 +935,10 @@ def calculate_route(
             sell_exchange,
 
         "buy_price":
-            buy_result[
-                "average_price"
-            ],
+            buy_result["average_price"],
 
         "sell_price":
-            sell_result[
-                "average_price"
-            ],
+            sell_result["average_price"],
 
         "usdt":
             buy_result["usdt"],
@@ -1054,16 +961,6 @@ def calculate_route(
         "sell_fee":
             sell_fee,
 
-        "buy_unfilled_toman":
-            buy_result[
-                "unfilled_toman"
-            ],
-
-        "sell_unfilled_usdt":
-            sell_result[
-                "unfilled_usdt"
-            ],
-
         "execution_ratio":
             execution_ratio,
 
@@ -1076,7 +973,7 @@ def calculate_route(
 
 
 # ============================================================
-# محاسبه همه مسیرها
+# ALL ROUTES
 # ============================================================
 
 def calculate_all_routes(
@@ -1124,54 +1021,12 @@ def calculate_all_routes(
 
 
 # ============================================================
-# وضعیت بازار
+# MARKET SNAPSHOT
 # ============================================================
 
 def print_market_snapshot(
     orderbooks
 ):
-
-    best_ask = None
-
-    best_bid = None
-
-    for exchange, book in orderbooks.items():
-
-        if book["asks"]:
-
-            ask_price = (
-                book["asks"][0][0]
-            )
-
-            if (
-                best_ask is None
-                or
-                ask_price
-                < best_ask[0]
-            ):
-
-                best_ask = (
-                    ask_price,
-                    exchange
-                )
-
-        if book["bids"]:
-
-            bid_price = (
-                book["bids"][0][0]
-            )
-
-            if (
-                best_bid is None
-                or
-                bid_price
-                > best_bid[0]
-            ):
-
-                best_bid = (
-                    bid_price,
-                    exchange
-                )
 
     print()
 
@@ -1179,34 +1034,87 @@ def print_market_snapshot(
         "========== وضعیت بازار =========="
     )
 
+    for exchange in ENABLED_EXCHANGES:
+
+        book = orderbooks.get(
+            exchange
+        )
+
+        if not book:
+
+            print(
+                f"{exchange}: ❌ نامعتبر"
+            )
+
+            continue
+
+        ask = (
+            book["asks"][0][0]
+            if book["asks"]
+            else None
+        )
+
+        bid = (
+            book["bids"][0][0]
+            if book["bids"]
+            else None
+        )
+
+        print(
+            f"{exchange}: "
+            f"Ask={format_toman(ask)} | "
+            f"Bid={format_toman(bid)}"
+        )
+
+    best_ask = None
+    best_bid = None
+
+    for exchange, book in orderbooks.items():
+
+        if book["asks"]:
+
+            price = book["asks"][0][0]
+
+            if (
+                best_ask is None
+                or
+                price < best_ask[0]
+            ):
+
+                best_ask = (
+                    price,
+                    exchange
+                )
+
+        if book["bids"]:
+
+            price = book["bids"][0][0]
+
+            if (
+                best_bid is None
+                or
+                price > best_bid[0]
+            ):
+
+                best_bid = (
+                    price,
+                    exchange
+                )
+
     if best_ask:
 
         print(
-            "کمترین قیمت خرید: "
-            f"{best_ask[1]} "
-            "→ "
+            "🟢 کمترین Ask: "
+            f"{best_ask[1]} → "
             f"{format_toman(best_ask[0])} تومان"
-        )
-
-    else:
-
-        print(
-            "کمترین قیمت خرید: -"
         )
 
     if best_bid:
 
         print(
-            "بیشترین قیمت فروش: "
-            f"{best_bid[1]} "
-            "→ "
+            "🔴 بیشترین Bid: "
+            f"{best_bid[1]} → "
             f"{format_toman(best_bid[0])} تومان"
-        )
-
-    else:
-
-        print(
-            "بیشترین قیمت فروش: -"
         )
 
     print(
@@ -1215,7 +1123,7 @@ def print_market_snapshot(
 
 
 # ============================================================
-# رتبه‌بندی مسیرها
+# PRINT ROUTES
 # ============================================================
 
 def print_routes(routes):
@@ -1223,17 +1131,17 @@ def print_routes(routes):
     print()
 
     print(
-        "========== رتبه‌بندی فرصت‌ها =========="
+        "========== رتبه‌بندی مسیرها =========="
     )
 
     if not routes:
 
         print(
-            "هیچ مسیر معتبری پیدا نشد."
+            "هیچ مسیر قابل محاسبه‌ای وجود ندارد."
         )
 
         print(
-            "======================================="
+            "====================================="
         )
 
         return
@@ -1243,32 +1151,44 @@ def print_routes(routes):
         start=1
     ):
 
-        execution_text = (
+        status = (
             "کامل"
             if route["fully_executable"]
-            else
-            "ناقص"
+            else "ناقص"
         )
 
         print(
             f"{index}. "
-            f"خرید از {route['buy_exchange']} "
-            f"→ فروش در {route['sell_exchange']} | "
+            f"{route['buy_exchange']} → "
+            f"{route['sell_exchange']} | "
             f"سود: "
             f"{format_percent(route['profit_percent'])} | "
-            f"سود خالص: "
+            f"خالص: "
             f"{format_toman(route['net_profit'])} تومان | "
-            f"اجرا: {execution_text}"
+            f"اجرا: "
+            f"{route['execution_ratio'] * 100:.1f}% | "
+            f"{status}"
         )
 
     print(
-        "======================================="
+        "====================================="
     )
 
 
 # ============================================================
-# ثبت تاریخچه فرصت‌ها
+# HISTORY
 # ============================================================
+
+def route_key(
+    buy_exchange,
+    sell_exchange
+):
+
+    return (
+        f"{buy_exchange}_"
+        f"{sell_exchange}"
+    )
+
 
 def update_opportunity_history(
     routes
@@ -1276,33 +1196,29 @@ def update_opportunity_history(
 
     global opportunity_history
 
-    now = now_tehran().strftime(
+    snapshot = {}
+
+    current_time = now_tehran().strftime(
         "%Y-%m-%d %H:%M:%S"
     )
 
-    snapshot = {}
-
     for route in routes:
 
-        route_key = make_route_key(
+        key = route_key(
             route["buy_exchange"],
             route["sell_exchange"]
         )
 
-        snapshot[
-            route_key
-        ] = {
+        snapshot[key] = {
 
-            "time": now,
+            "time":
+                current_time,
 
             "profit_percent":
                 route["profit_percent"],
 
             "net_profit":
                 route["net_profit"],
-
-            "spent":
-                route["spent"],
 
             "execution_ratio":
                 route["execution_ratio"],
@@ -1323,9 +1239,10 @@ def update_opportunity_history(
         snapshot
     )
 
-    if len(
-        opportunity_history
-    ) > OPPORTUNITY_HISTORY_LIMIT:
+    if (
+        len(opportunity_history)
+        > OPPORTUNITY_HISTORY_LIMIT
+    ):
 
         opportunity_history = (
             opportunity_history[
@@ -1334,29 +1251,8 @@ def update_opportunity_history(
         )
 
 
-# ============================================================
-# تعداد کل مشاهدات موجود در تاریخچه
-# ============================================================
-
-def get_total_history_observations():
-
-    total = 0
-
-    for snapshot in opportunity_history:
-
-        total += len(
-            snapshot
-        )
-
-    return total
-
-
-# ============================================================
-# تحلیل پایداری یک مسیر
-# ============================================================
-
 def analyze_route_history(
-    route_key
+    key
 ):
 
     observations = []
@@ -1364,7 +1260,7 @@ def analyze_route_history(
     for snapshot in opportunity_history:
 
         data = snapshot.get(
-            route_key
+            key
         )
 
         if data:
@@ -1377,27 +1273,29 @@ def analyze_route_history(
 
         return {
 
-            "observations": 0,
+            "observations":
+                0,
 
-            "positive_observations": 0,
+            "positive_observations":
+                0,
 
-            "qualified_observations": 0,
+            "qualified_observations":
+                0,
 
-            "positive_ratio": 0,
+            "positive_ratio":
+                0,
 
-            "qualified_ratio": 0,
+            "qualified_ratio":
+                0,
 
-            "average_profit_percent": 0,
+            "average_profit_percent":
+                0,
 
-            "average_positive_profit_percent": 0,
+            "average_net_profit":
+                0,
 
-            "average_net_profit": 0,
-
-            "average_execution_ratio": 0,
-
-            "stability_score": 0,
-
-            "score": 0,
+            "average_execution_ratio":
+                0,
         }
 
     positive = [
@@ -1409,70 +1307,6 @@ def analyze_route_history(
         x for x in observations
         if x["qualified"]
     ]
-
-    average_profit = (
-        sum(
-            x["profit_percent"]
-            for x in observations
-        )
-        / len(observations)
-    )
-
-    average_positive_profit = (
-        sum(
-            x["profit_percent"]
-            for x in positive
-        )
-        / len(positive)
-        if positive
-        else 0
-    )
-
-    average_net_profit = (
-        sum(
-            x["net_profit"]
-            for x in observations
-        )
-        / len(observations)
-    )
-
-    average_execution = (
-        sum(
-            x["execution_ratio"]
-            for x in observations
-        )
-        / len(observations)
-    )
-
-    positive_ratio = (
-        len(positive)
-        / len(observations)
-    )
-
-    qualified_ratio = (
-        len(qualified)
-        / len(observations)
-    )
-
-    # --------------------------------------------------------
-    # امتیاز ثبات
-    # --------------------------------------------------------
-
-    stability_score = (
-        positive_ratio * 35
-        +
-        qualified_ratio * 35
-        +
-        min(
-            max(
-                average_positive_profit,
-                0
-            ),
-            5
-        ) * 5
-        +
-        average_execution * 25
-    )
 
     return {
 
@@ -1486,879 +1320,66 @@ def analyze_route_history(
             len(qualified),
 
         "positive_ratio":
-            positive_ratio,
+            len(positive)
+            / len(observations),
 
         "qualified_ratio":
-            qualified_ratio,
+            len(qualified)
+            / len(observations),
 
         "average_profit_percent":
-            average_profit,
-
-        "average_positive_profit_percent":
-            average_positive_profit,
+            sum(
+                x["profit_percent"]
+                for x in observations
+            )
+            / len(observations),
 
         "average_net_profit":
-            average_net_profit,
+            sum(
+                x["net_profit"]
+                for x in observations
+            )
+            / len(observations),
 
         "average_execution_ratio":
-            average_execution,
-
-        "stability_score":
-            stability_score,
-
-        "score":
-            stability_score,
+            sum(
+                x["execution_ratio"]
+                for x in observations
+            )
+            / len(observations),
     }
 
 
 # ============================================================
-# محاسبه امتیاز مسیر برای تخصیص سرمایه
-# ============================================================
-
-def calculate_route_allocation_score(
-    route,
-    analysis
-):
-
-    observations = analysis[
-        "observations"
-    ]
-
-    positive_observations = analysis[
-        "positive_observations"
-    ]
-
-    if observations < MIN_ALLOCATION_OBSERVATIONS:
-
-        return 0.0
-
-    if (
-        positive_observations
-        < MIN_POSITIVE_OBSERVATIONS
-    ):
-
-        return 0.0
-
-    # --------------------------------------------------------
-    # نسبت سوددهی
-    # --------------------------------------------------------
-
-    positive_ratio = (
-        analysis["positive_ratio"]
-    )
-
-    # --------------------------------------------------------
-    # نسبت رسیدن به حداقل سود
-    # --------------------------------------------------------
-
-    qualified_ratio = (
-        analysis["qualified_ratio"]
-    )
-
-    # --------------------------------------------------------
-    # سود متوسط فرصت‌های مثبت
-    # --------------------------------------------------------
-
-    average_profit = max(
-        analysis[
-            "average_positive_profit_percent"
-        ],
-        0
-    )
-
-    profit_factor = min(
-        average_profit / 3.0,
-        1.0
-    )
-
-    # --------------------------------------------------------
-    # نقدشوندگی / قابلیت اجرا
-    # --------------------------------------------------------
-
-    execution_factor = min(
-        max(
-            analysis[
-                "average_execution_ratio"
-            ],
-            0
-        ),
-        1
-    )
-
-    # --------------------------------------------------------
-    # سود فعلی
-    # --------------------------------------------------------
-
-    current_profit_factor = min(
-        max(
-            route["profit_percent"] / 3.0,
-            0
-        ),
-        1
-    )
-
-    # --------------------------------------------------------
-    # ثبات
-    # --------------------------------------------------------
-
-    stability_factor = min(
-        max(
-            analysis[
-                "stability_score"
-            ] / 100.0,
-            0
-        ),
-        1
-    )
-
-    # --------------------------------------------------------
-    # ترکیب نهایی
-    #
-    # عمداً هیچ عامل واحدی تعیین‌کننده نیست.
-    # --------------------------------------------------------
-
-    score = (
-
-        positive_ratio
-        * 0.20
-
-        +
-
-        qualified_ratio
-        * 0.25
-
-        +
-
-        profit_factor
-        * 0.20
-
-        +
-
-        execution_factor
-        * 0.15
-
-        +
-
-        stability_factor
-        * 0.10
-
-        +
-
-        current_profit_factor
-        * 0.10
-    )
-
-    # --------------------------------------------------------
-    # تعداد مشاهده بیشتر = اعتماد بیشتر
-    # ولی با سقف 1
-    # --------------------------------------------------------
-
-    observation_confidence = min(
-        observations
-        / (
-            MIN_ALLOCATION_OBSERVATIONS
-            * 2
-        ),
-        1.0
-    )
-
-    score *= (
-        0.70
-        +
-        0.30
-        * observation_confidence
-    )
-
-    return max(
-        score,
-        0
-    )
-
-
-# ============================================================
-# پیشنهاد تخصیص سرمایه
-# ============================================================
-
-def calculate_capital_allocation(
-    routes,
-    total_capital
-):
-
-    """
-    این تابع موجودی واقعی صرافی‌ها را نمی‌داند.
-
-    فقط بر اساس رفتار مشاهده‌شده بازار،
-    یک پیشنهاد تحلیلی برای محل مناسب‌تر
-    تأمین سرمایه ارائه می‌دهد.
-
-    این پیشنهاد دستور معامله نیست.
-    """
-
-    total_history = (
-        get_total_history_observations()
-    )
-
-    # --------------------------------------------------------
-    # قبل از رسیدن به حداقل داده:
-    # هیچ تخصیص عددی تولید نمی‌شود.
-    # --------------------------------------------------------
-
-    if (
-        total_history
-        < MIN_ALLOCATION_OBSERVATIONS
-    ):
-
-        return {
-
-            "ready": False,
-
-            "reason":
-                "داده کافی نیست",
-
-            "total_history":
-                total_history,
-
-            "required_history":
-                MIN_ALLOCATION_OBSERVATIONS,
-
-            "allocation": {
-                exchange: 0
-                for exchange
-                in ENABLED_EXCHANGES
-            },
-        }
-
-    exchange_scores = {
-        exchange: 0.0
-        for exchange
-        in ENABLED_EXCHANGES
-    }
-
-    route_scores = []
-
-    for route in routes:
-
-        if route["net_profit"] <= 0:
-            continue
-
-        route_key = make_route_key(
-            route["buy_exchange"],
-            route["sell_exchange"]
-        )
-
-        analysis = analyze_route_history(
-            route_key
-        )
-
-        score = calculate_route_allocation_score(
-            route,
-            analysis
-        )
-
-        if score <= 0:
-            continue
-
-        route_scores.append(
-            (
-                route,
-                analysis,
-                score
-            )
-        )
-
-        # ----------------------------------------------------
-        # سمت خرید اهمیت بیشتری دارد،
-        # چون سرمایه تومانی برای شروع مسیر لازم است.
-        # ----------------------------------------------------
-
-        exchange_scores[
-            route["buy_exchange"]
-        ] += (
-            score * 0.60
-        )
-
-        # سمت فروش نیز اهمیت دارد.
-        exchange_scores[
-            route["sell_exchange"]
-        ] += (
-            score * 0.40
-        )
-
-    total_score = sum(
-        exchange_scores.values()
-    )
-
-    if total_score <= 0:
-
-        return {
-
-            "ready": True,
-
-            "reason":
-                "مسیر پایدار و مثبت کافی وجود ندارد",
-
-            "total_history":
-                total_history,
-
-            "required_history":
-                MIN_ALLOCATION_OBSERVATIONS,
-
-            "allocation": {
-                exchange: 0
-                for exchange
-                in ENABLED_EXCHANGES
-            },
-
-            "route_scores":
-                route_scores,
-        }
-
-    # --------------------------------------------------------
-    # سهم اولیه
-    # --------------------------------------------------------
-
-    raw_percentages = {}
-
-    for exchange in ENABLED_EXCHANGES:
-
-        raw_percentages[
-            exchange
-        ] = (
-            exchange_scores[exchange]
-            / total_score
-            * 100
-        )
-
-    # --------------------------------------------------------
-    # اعمال سقف تمرکز
-    # --------------------------------------------------------
-
-    capped = {}
-
-    excess = 0.0
-
-    for exchange in ENABLED_EXCHANGES:
-
-        percentage = raw_percentages[
-            exchange
-        ]
-
-        if (
-            percentage
-            > MAX_EXCHANGE_ALLOCATION_PERCENT
-        ):
-
-            capped[
-                exchange
-            ] = MAX_EXCHANGE_ALLOCATION_PERCENT
-
-            excess += (
-                percentage
-                - MAX_EXCHANGE_ALLOCATION_PERCENT
-            )
-
-        else:
-
-            capped[
-                exchange
-            ] = percentage
-
-    # --------------------------------------------------------
-    # توزیع مقدار اضافی بین صرافی‌هایی
-    # که هنوز به سقف نرسیده‌اند.
-    # --------------------------------------------------------
-
-    for _ in range(10):
-
-        if excess <= 0.0001:
-            break
-
-        available = [
-            exchange
-            for exchange
-            in ENABLED_EXCHANGES
-            if capped[exchange]
-            < MAX_EXCHANGE_ALLOCATION_PERCENT
-        ]
-
-        if not available:
-            break
-
-        available_score = sum(
-            max(
-                exchange_scores[exchange],
-                0
-            )
-            for exchange
-            in available
-        )
-
-        if available_score <= 0:
-            break
-
-        distributed = 0.0
-
-        for exchange in available:
-
-            room = (
-                MAX_EXCHANGE_ALLOCATION_PERCENT
-                - capped[exchange]
-            )
-
-            if room <= 0:
-                continue
-
-            share = (
-                excess
-                *
-                (
-                    exchange_scores[exchange]
-                    / available_score
-                )
-            )
-
-            add = min(
-                share,
-                room
-            )
-
-            capped[
-                exchange
-            ] += add
-
-            distributed += add
-
-        if distributed <= 0:
-            break
-
-        excess -= distributed
-
-    # --------------------------------------------------------
-    # نرمال‌سازی نهایی
-    # --------------------------------------------------------
-
-    percentage_total = sum(
-        capped.values()
-    )
-
-    if percentage_total > 0:
-
-        for exchange in ENABLED_EXCHANGES:
-
-            capped[
-                exchange
-            ] = (
-                capped[exchange]
-                / percentage_total
-                * 100
-            )
-
-    allocation = {}
-
-    for exchange in ENABLED_EXCHANGES:
-
-        allocation[
-            exchange
-        ] = int(
-            total_capital
-            * capped[exchange]
-            / 100
-        )
-
-    # --------------------------------------------------------
-    # اصلاح اختلاف گرد کردن
-    # --------------------------------------------------------
-
-    allocated = sum(
-        allocation.values()
-    )
-
-    difference = (
-        total_capital
-        - allocated
-    )
-
-    if difference != 0:
-
-        # اختلاف به صرافی دارای بیشترین سهم
-        # اضافه می‌شود.
-        target_exchange = max(
-            ENABLED_EXCHANGES,
-            key=lambda x:
-                allocation[x]
-        )
-
-        allocation[
-            target_exchange
-        ] += difference
-
-    return {
-
-        "ready": True,
-
-        "reason":
-            "تحلیل انجام شد",
-
-        "total_history":
-            total_history,
-
-        "required_history":
-            MIN_ALLOCATION_OBSERVATIONS,
-
-        "allocation":
-            allocation,
-
-        "percentages":
-            capped,
-
-        "exchange_scores":
-            exchange_scores,
-
-        "route_scores":
-            route_scores,
-    }
-
-
-# ============================================================
-# نمایش پیشنهاد تخصیص سرمایه
-# ============================================================
-
-def print_capital_allocation(
-    routes
-):
-
-    result = calculate_capital_allocation(
-        routes,
-        TOTAL_CAPITAL_TOMAN
-    )
-
-    print()
-
-    print(
-        "========== تحلیل تخصیص سرمایه =========="
-    )
-
-    print(
-        f"سرمایه کل: "
-        f"{format_toman(TOTAL_CAPITAL_TOMAN)} تومان"
-    )
-
-    print(
-        f"مشاهدات فعلی: "
-        f"{result['total_history']}"
-        " / "
-        f"{result['required_history']}"
-    )
-
-    # --------------------------------------------------------
-    # هنوز داده کافی نیست
-    # --------------------------------------------------------
-
-    if not result["ready"]:
-
-        print()
-
-        print(
-            "⏳ هنوز داده کافی برای پیشنهاد عددی وجود ندارد."
-        )
-
-        print(
-            "ربات فعلاً فقط فرصت‌ها را جمع‌آوری و تحلیل می‌کند."
-        )
-
-        print(
-            "این کار عمداً انجام شده تا تخصیص سرمایه "
-            "بر اساس چند مشاهده محدود نباشد."
-        )
-
-        print(
-            "=========================================="
-        )
-
-        return result
-
-    # --------------------------------------------------------
-    # داده کافی هست ولی مسیر مناسبی نیست
-    # --------------------------------------------------------
-
-    if not any(
-        result[
-            "allocation"
-        ].values()
-    ):
-
-        print()
-
-        print(
-            "ℹ️ با وجود داده کافی، فعلاً مسیر "
-            "پایدار و مثبت مناسبی برای تخصیص پیدا نشد."
-        )
-
-        print(
-            "=========================================="
-        )
-
-        return result
-
-    print()
-
-    print(
-        "📊 پیشنهاد فعلی:"
-    )
-
-    for exchange in ENABLED_EXCHANGES:
-
-        amount = result[
-            "allocation"
-        ].get(
-            exchange,
-            0
-        )
-
-        percentage = result.get(
-            "percentages",
-            {}
-        ).get(
-            exchange,
-            0
-        )
-
-        print(
-            f"{exchange}: "
-            f"{format_toman(amount)} تومان "
-            f"({percentage:.1f}%)"
-        )
-
-    print()
-
-    print(
-        "📌 سقف تمرکز هر صرافی: "
-        f"{MAX_EXCHANGE_ALLOCATION_PERCENT:.0f}%"
-    )
-
-    print(
-        "ℹ️ این پیشنهاد بر اساس تکرار فرصت، "
-        "سود، ثبات و نقدشوندگی است."
-    )
-
-    print(
-        "⚠️ موجودی واقعی صرافی‌ها در محاسبه وارد نشده."
-    )
-
-    print(
-        "⚠️ این پیشنهاد به معنی انجام معامله نیست."
-    )
-
-    print(
-        "=========================================="
-    )
-
-    return result
-
-
-# ============================================================
-# تلگرام
-# ============================================================
-
-def send_telegram(
-    message
-):
-
-    if not TELEGRAM_BOT_TOKEN:
-        return False
-
-    if not TELEGRAM_CHAT_ID:
-        return False
-
-    url = (
-        "https://api.telegram.org/bot"
-        f"{TELEGRAM_BOT_TOKEN}"
-        "/sendMessage"
-    )
-
-    payload = {
-
-        "chat_id":
-            TELEGRAM_CHAT_ID,
-
-        "text":
-            message,
-    }
-
-    try:
-
-        response = SESSION.post(
-            url,
-            json=payload,
-            timeout=REQUEST_TIMEOUT
-        )
-
-        response.raise_for_status()
-
-        return True
-
-    except Exception as e:
-
-        print(
-            f"⚠️ خطای تلگرام: {e}"
-        )
-
-        return False
-
-
-# ============================================================
-# هشدار آربیتراژ
-# ============================================================
-
-def send_arbitrage_alert(
-    route
-):
-
-    buy_exchange = (
-        route["buy_exchange"]
-    )
-
-    sell_exchange = (
-        route["sell_exchange"]
-    )
-
-    route_key = make_route_key(
-        buy_exchange,
-        sell_exchange
-    )
-
-    current_time = time.time()
-
-    previous_time = (
-        last_alert_time.get(
-            route_key,
-            0
-        )
-    )
-
-    if (
-        current_time
-        - previous_time
-        < ALERT_COOLDOWN_SECONDS
-    ):
-
-        return False
-
-    profit = route[
-        "net_profit"
-    ]
-
-    profit_percent = route[
-        "profit_percent"
-    ]
-
-    if profit <= 0:
-        return False
-
-    if (
-        profit_percent
-        < MIN_PROFIT_PERCENT
-    ):
-
-        return False
-
-    if (
-        route["execution_ratio"]
-        < MIN_EXECUTION_RATIO
-    ):
-
-        return False
-
-    history = analyze_route_history(
-        route_key
-    )
-
-    message = (
-        "🚨 فرصت آربیتراژ\n\n"
-
-        f"خرید از: {buy_exchange}\n"
-        f"فروش در: {sell_exchange}\n\n"
-
-        f"قیمت میانگین خرید: "
-        f"{format_toman(route['buy_price'])} تومان\n"
-
-        f"قیمت میانگین فروش: "
-        f"{format_toman(route['sell_price'])} تومان\n\n"
-
-        f"سرمایه استفاده‌شده: "
-        f"{format_toman(route['spent'])} تومان\n"
-
-        f"مقدار USDT: "
-        f"{route['usdt']:.4f}\n\n"
-
-        f"سود خالص: "
-        f"{format_toman(profit)} تومان\n"
-
-        f"درصد سود: "
-        f"{format_percent(profit_percent)}\n\n"
-
-        f"قابلیت اجرای Order Book: "
-        f"{route['execution_ratio'] * 100:.1f}%\n"
-
-        f"تعداد مشاهده مسیر: "
-        f"{history['observations']}\n"
-
-        f"تعداد مشاهده سودده: "
-        f"{history['positive_observations']}\n"
-
-        f"تعداد رسیدن به حداقل سود: "
-        f"{history['qualified_observations']}\n\n"
-
-        f"کارمزد خرید: "
-        f"{route['buy_fee'] * 100:.3f}%\n"
-
-        f"کارمزد فروش: "
-        f"{route['sell_fee'] * 100:.3f}%\n\n"
-
-        "⚠️ فقط هشدار و مانیتورینگ\n"
-        "❌ معامله واقعی انجام نمی‌شود."
-    )
-
-    if send_telegram(
-        message
-    ):
-
-        last_alert_time[
-            route_key
-        ] = current_time
-
-        return True
-
-    return False
-
-
-# ============================================================
-# ساختار پیش‌فرض آمار
+# STATS
 # ============================================================
 
 def default_stats():
 
     return {
 
-        "total_route_checks": 0,
+        "total_route_checks":
+            0,
 
-        "total_positive_opportunities": 0,
+        "total_positive_opportunities":
+            0,
 
-        "total_qualified_opportunities": 0,
+        "total_qualified_opportunities":
+            0,
 
-        "total_simulated_profit_toman": 0,
+        "total_simulated_profit_toman":
+            0,
 
-        "total_alerts": 0,
+        "total_alerts":
+            0,
 
-        "daily": {},
+        "daily":
+            {},
 
-        "weekly": {},
+        "weekly":
+            {},
     }
 
-
-# ============================================================
-# بارگذاری آمار
-# ============================================================
 
 def load_stats():
 
@@ -2402,10 +1423,6 @@ def load_stats():
         return default_stats()
 
 
-# ============================================================
-# ذخیره آمار
-# ============================================================
-
 def save_stats(
     stats
 ):
@@ -2428,24 +1445,22 @@ def save_stats(
     except Exception as e:
 
         print(
-            f"⚠️ خطا در ذخیره آمار: {e}"
+            f"⚠️ خطای ذخیره آمار: {e}"
         )
 
-
-# ============================================================
-# ثبت آمار
-# ============================================================
 
 def update_stats(
     stats,
     routes
 ):
 
-    today = now_tehran().strftime(
+    now = now_tehran()
+
+    today = now.strftime(
         "%Y-%m-%d"
     )
 
-    week = now_tehran().strftime(
+    week = now.strftime(
         "%Y-W%W"
     )
 
@@ -2453,51 +1468,61 @@ def update_stats(
 
         stats["daily"][today] = {
 
-            "route_checks": 0,
+            "route_checks":
+                0,
 
-            "positive": 0,
+            "positive":
+                0,
 
-            "qualified": 0,
+            "qualified":
+                0,
 
-            "simulated_profit_toman": 0,
+            "simulated_profit_toman":
+                0,
 
-            "alerts": 0,
+            "alerts":
+                0,
         }
 
     if week not in stats["weekly"]:
 
         stats["weekly"][week] = {
 
-            "route_checks": 0,
+            "route_checks":
+                0,
 
-            "positive": 0,
+            "positive":
+                0,
 
-            "qualified": 0,
+            "qualified":
+                0,
 
-            "simulated_profit_toman": 0,
+            "simulated_profit_toman":
+                0,
 
-            "alerts": 0,
+            "alerts":
+                0,
         }
 
-    route_count = len(
+    count = len(
         routes
     )
 
     stats[
         "total_route_checks"
-    ] += route_count
+    ] += count
 
     stats[
         "daily"
     ][today][
         "route_checks"
-    ] += route_count
+    ] += count
 
     stats[
         "weekly"
     ][week][
         "route_checks"
-    ] += route_count
+    ] += count
 
     for route in routes:
 
@@ -2571,119 +1596,812 @@ def update_stats(
 
 
 # ============================================================
-# ثبت هشدار در آمار
+# TELEGRAM KEYBOARD
 # ============================================================
 
-def record_alert_stat(
-    stats
+def capital_keyboard():
+
+    return {
+
+        "inline_keyboard": [
+
+            [
+                {
+                    "text":
+                        "💰 50 میلیون",
+
+                    "callback_data":
+                        "CAPITAL:50000000"
+                },
+
+                {
+                    "text":
+                        "💰 100 میلیون",
+
+                    "callback_data":
+                        "CAPITAL:100000000"
+                },
+            ],
+
+            [
+                {
+                    "text":
+                        "💰 200 میلیون",
+
+                    "callback_data":
+                        "CAPITAL:200000000"
+                },
+
+                {
+                    "text":
+                        "💰 500 میلیون",
+
+                    "callback_data":
+                        "CAPITAL:500000000"
+                },
+            ],
+
+            [
+                {
+                    "text":
+                        "💰 1 میلیارد",
+
+                    "callback_data":
+                        "CAPITAL:1000000000"
+                },
+            ],
+
+            [
+                {
+                    "text":
+                        "✏️ ورود مبلغ دلخواه",
+
+                    "callback_data":
+                        "CAPITAL:CUSTOM"
+                },
+            ],
+
+            [
+                {
+                    "text":
+                        "📊 وضعیت فعلی",
+
+                    "callback_data":
+                        "STATUS"
+                },
+            ],
+        ]
+    }
+
+
+# ============================================================
+# TELEGRAM SEND
+# ============================================================
+
+def send_telegram(
+    message,
+    reply_markup=None
 ):
 
-    today = now_tehran().strftime(
-        "%Y-%m-%d"
+    if not TELEGRAM_BOT_TOKEN:
+
+        return False
+
+    if not TELEGRAM_CHAT_ID:
+
+        return False
+
+    url = (
+        "https://api.telegram.org/bot"
+        f"{TELEGRAM_BOT_TOKEN}"
+        "/sendMessage"
     )
 
-    week = now_tehran().strftime(
-        "%Y-W%W"
-    )
+    payload = {
 
-    if today not in stats["daily"]:
+        "chat_id":
+            TELEGRAM_CHAT_ID,
 
-        stats["daily"][today] = {
+        "text":
+            message,
+    }
 
-            "route_checks": 0,
+    if reply_markup is not None:
 
-            "positive": 0,
+        payload[
+            "reply_markup"
+        ] = reply_markup
 
-            "qualified": 0,
+    try:
 
-            "simulated_profit_toman": 0,
+        response = SESSION.post(
+            url,
+            json=payload,
+            timeout=REQUEST_TIMEOUT
+        )
 
-            "alerts": 0,
-        }
+        response.raise_for_status()
 
-    if week not in stats["weekly"]:
+        return True
 
-        stats["weekly"][week] = {
+    except Exception as e:
 
-            "route_checks": 0,
+        print(
+            f"⚠️ خطای Telegram: {e}"
+        )
 
-            "positive": 0,
-
-            "qualified": 0,
-
-            "simulated_profit_toman": 0,
-
-            "alerts": 0,
-        }
-
-    stats[
-        "total_alerts"
-    ] += 1
-
-    stats[
-        "daily"
-    ][today][
-        "alerts"
-    ] += 1
-
-    stats[
-        "weekly"
-    ][week][
-        "alerts"
-    ] += 1
-
-    save_stats(
-        stats
-    )
+        return False
 
 
 # ============================================================
-# گزارش دوره‌ای
+# TELEGRAM CALLBACK ANSWER
 # ============================================================
 
-REPORT_TIMES = {
-    "10:00",
-    "16:00",
-    "18:00",
-}
-
-
-def send_periodic_report(
-    stats
+def answer_callback(
+    callback_id,
+    text
 ):
 
-    global last_report_minute
+    url = (
+        "https://api.telegram.org/bot"
+        f"{TELEGRAM_BOT_TOKEN}"
+        "/answerCallbackQuery"
+    )
+
+    try:
+
+        SESSION.post(
+            url,
+            json={
+                "callback_query_id":
+                    callback_id,
+
+                "text":
+                    text,
+            },
+            timeout=REQUEST_TIMEOUT
+        )
+
+    except Exception:
+
+        pass
+
+
+# ============================================================
+# CUSTOM CAPITAL
+# ============================================================
+
+def set_capital(
+    amount
+):
+
+    global selected_capital_toman
+
+    if amount <= 0:
+
+        return False
+
+    selected_capital_toman = int(
+        amount
+    )
+
+    send_telegram(
+        "✅ موجودی انتخاب شد.\n\n"
+        f"💰 موجودی فعلی:\n"
+        f"{format_toman(selected_capital_toman)} تومان\n\n"
+        "از این مبلغ برای محاسبه فرصت‌های "
+        "آربیتراژ استفاده می‌شود.\n\n"
+        "❌ هیچ معامله‌ای انجام نمی‌شود.",
+        capital_keyboard()
+    )
+
+    print(
+        "💰 موجودی جدید: "
+        f"{format_toman(selected_capital_toman)} تومان"
+    )
+
+    return True
+
+
+# ============================================================
+# TELEGRAM UPDATE HANDLER
+# ============================================================
+
+def handle_telegram_update(
+    update
+):
+
+    global waiting_for_custom_capital
+
+    # --------------------------------------------------------
+    # CALLBACK
+    # --------------------------------------------------------
+
+    callback = update.get(
+        "callback_query"
+    )
+
+    if callback:
+
+        callback_id = callback.get(
+            "id"
+        )
+
+        data = callback.get(
+            "data",
+            ""
+        )
+
+        answer_callback(
+            callback_id,
+            "در حال پردازش..."
+        )
+
+        if data == "STATUS":
+
+            send_current_status_message()
+
+            return
+
+        if data == "CAPITAL:CUSTOM":
+
+            waiting_for_custom_capital = True
+
+            send_telegram(
+                "✏️ لطفاً مبلغ موجودی خود را "
+                "به تومان ارسال کنید.\n\n"
+                "مثال:\n"
+                "370000000\n\n"
+                "یا:\n"
+                "370 میلیون"
+            )
+
+            return
+
+        if data.startswith(
+            "CAPITAL:"
+        ):
+
+            value = data.split(
+                ":",
+                1
+            )[1]
+
+            try:
+
+                amount = int(
+                    value
+                )
+
+                waiting_for_custom_capital = False
+
+                set_capital(
+                    amount
+                )
+
+            except Exception:
+
+                send_telegram(
+                    "❌ مبلغ نامعتبر است."
+                )
+
+            return
+
+    # --------------------------------------------------------
+    # MESSAGE
+    # --------------------------------------------------------
+
+    message = update.get(
+        "message"
+    )
+
+    if not message:
+
+        return
+
+    text = message.get(
+        "text",
+        ""
+    ).strip()
+
+    if not text:
+
+        return
+
+    # --------------------------------------------------------
+    # COMMAND
+    # --------------------------------------------------------
+
+    if text == "/status":
+
+        send_current_status_message()
+
+        return
+
+    if text == "/capital":
+
+        send_telegram(
+            "💰 انتخاب موجودی:",
+            capital_keyboard()
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # CUSTOM CAPITAL
+    # --------------------------------------------------------
+
+    if waiting_for_custom_capital:
+
+        try:
+
+            normalized = normalize_digits(
+                text
+            )
+
+            normalized = (
+                normalized
+                .replace(
+                    ",",
+                    ""
+                )
+                .replace(
+                    "٬",
+                    ""
+                )
+                .replace(
+                    " ",
+                    ""
+                )
+            )
+
+            multiplier = 1
+
+            if (
+                "میلیارد"
+                in normalized
+            ):
+
+                multiplier = 1_000_000_000
+
+                normalized = (
+                    normalized
+                    .replace(
+                        "میلیارد",
+                        ""
+                    )
+                )
+
+            elif (
+                "میلیون"
+                in normalized
+            ):
+
+                multiplier = 1_000_000
+
+                normalized = (
+                    normalized
+                    .replace(
+                        "میلیون",
+                        ""
+                    )
+                )
+
+            amount = float(
+                normalized
+            ) * multiplier
+
+            amount = int(
+                amount
+            )
+
+            if amount <= 0:
+
+                raise ValueError
+
+            waiting_for_custom_capital = False
+
+            set_capital(
+                amount
+            )
+
+        except Exception:
+
+            send_telegram(
+                "❌ مبلغ قابل تشخیص نیست.\n\n"
+                "مثال صحیح:\n"
+                "370000000\n"
+                "یا\n"
+                "370 میلیون"
+            )
+
+
+# ============================================================
+# TELEGRAM LISTENER
+# ============================================================
+
+def telegram_listener():
+
+    global telegram_update_offset
+
+    if not TELEGRAM_BOT_TOKEN:
+
+        print(
+            "⚠️ TELEGRAM_BOT_TOKEN تنظیم نشده."
+        )
+
+        return
+
+    print(
+        "📱 Telegram listener فعال شد."
+    )
+
+    while True:
+
+        try:
+
+            url = (
+                "https://api.telegram.org/bot"
+                f"{TELEGRAM_BOT_TOKEN}"
+                "/getUpdates"
+            )
+
+            params = {
+
+                "timeout":
+                    25,
+            }
+
+            if telegram_update_offset is not None:
+
+                params[
+                    "offset"
+                ] = telegram_update_offset
+
+            response = SESSION.get(
+                url,
+                params=params,
+                timeout=35
+            )
+
+            response.raise_for_status()
+
+            data = response.json()
+
+            updates = data.get(
+                "result",
+                []
+            )
+
+            for update in updates:
+
+                telegram_update_offset = (
+                    update["update_id"] + 1
+                )
+
+                try:
+
+                    handle_telegram_update(
+                        update
+                    )
+
+                except Exception as e:
+
+                    print(
+                        "⚠️ خطای پردازش Telegram: "
+                        f"{e}"
+                    )
+
+        except Exception as e:
+
+            print(
+                f"⚠️ خطای Telegram listener: {e}"
+            )
+
+            time.sleep(5)
+
+
+def start_telegram_listener():
+
+    thread = threading.Thread(
+        target=telegram_listener,
+        daemon=True
+    )
+
+    thread.start()
+
+
+# ============================================================
+# CURRENT STATUS MESSAGE
+# ============================================================
+
+def build_current_status_message(
+    stats
+):
 
     now = now_tehran()
 
-    current_time = now.strftime(
-        "%H:%M"
+    lines = []
+
+    lines.append(
+        "📊 وضعیت فعلی آربیتراژ"
     )
 
-    if (
-        current_time
-        not in REPORT_TIMES
-    ):
-
-        return
-
-    if (
-        last_report_minute
-        == current_time
-    ):
-
-        return
-
-    last_report_minute = (
-        current_time
+    lines.append(
+        ""
     )
+
+    lines.append(
+        f"🕐 زمان: "
+        f"{now.strftime('%Y-%m-%d %H:%M:%S')} تهران"
+    )
+
+    lines.append(
+        ""
+    )
+
+    # --------------------------------------------------------
+    # CAPITAL
+    # --------------------------------------------------------
+
+    lines.append(
+        "💰 موجودی:"
+    )
+
+    if selected_capital_toman is None:
+
+        lines.append(
+            "❌ هنوز انتخاب نشده"
+        )
+
+    else:
+
+        lines.append(
+            format_toman(
+                selected_capital_toman
+            )
+            + " تومان"
+        )
+
+    # --------------------------------------------------------
+    # EXCHANGES
+    # --------------------------------------------------------
+
+    lines.append(
+        ""
+    )
+
+    lines.append(
+        "🏦 وضعیت صرافی‌ها:"
+    )
+
+    for exchange in ENABLED_EXCHANGES:
+
+        book = latest_orderbooks.get(
+            exchange
+        )
+
+        if not book:
+
+            lines.append(
+                f"• {exchange}: ❌"
+            )
+
+            continue
+
+        ask = (
+            book["asks"][0][0]
+            if book["asks"]
+            else None
+        )
+
+        bid = (
+            book["bids"][0][0]
+            if book["bids"]
+            else None
+        )
+
+        lines.append(
+            f"• {exchange}: ✅"
+        )
+
+        lines.append(
+            f"  Ask: {format_toman(ask)}"
+        )
+
+        lines.append(
+            f"  Bid: {format_toman(bid)}"
+        )
+
+    # --------------------------------------------------------
+    # BEST ROUTE
+    # --------------------------------------------------------
+
+    if latest_routes:
+
+        best = latest_routes[0]
+
+        lines.append(
+            ""
+        )
+
+        lines.append(
+            "🏆 بهترین مسیر:"
+        )
+
+        lines.append(
+            f"{best['buy_exchange']} → "
+            f"{best['sell_exchange']}"
+        )
+
+        lines.append(
+            ""
+        )
+
+        lines.append(
+            f"💵 سود خالص: "
+            f"{format_toman(best['net_profit'])} تومان"
+        )
+
+        lines.append(
+            f"📈 سود: "
+            f"{format_percent(best['profit_percent'])}"
+        )
+
+        lines.append(
+            f"🎯 حد هشدار: "
+            f"{format_percent(MIN_PROFIT_PERCENT)}"
+        )
+
+        distance = (
+            MIN_PROFIT_PERCENT
+            - best["profit_percent"]
+        )
+
+        if distance < 0:
+
+            distance = 0
+
+        lines.append(
+            f"📉 فاصله تا حد هشدار: "
+            f"{format_percent(distance)}"
+        )
+
+        lines.append(
+            f"📦 قابلیت اجرای Order Book: "
+            f"{best['execution_ratio'] * 100:.1f}%"
+        )
+
+        lines.append(
+            f"💱 مقدار USDT: "
+            f"{best['usdt']:.4f}"
+        )
+
+        lines.append(
+            ""
+        )
+
+        lines.append(
+            "💲 قیمت‌ها:"
+        )
+
+        lines.append(
+            f"• خرید: "
+            f"{format_toman(best['buy_price'])}"
+        )
+
+        lines.append(
+            f"• فروش: "
+            f"{format_toman(best['sell_price'])}"
+        )
+
+        lines.append(
+            ""
+        )
+
+        lines.append(
+            "💳 کارمزد:"
+        )
+
+        lines.append(
+            f"• خرید: "
+            f"{best['buy_fee'] * 100:.3f}%"
+        )
+
+        lines.append(
+            f"• فروش: "
+            f"{best['sell_fee'] * 100:.3f}%"
+        )
+
+        if (
+            best["net_profit"] > 0
+            and
+            best["profit_percent"]
+            >= MIN_PROFIT_PERCENT
+            and
+            best["execution_ratio"]
+            >= MIN_EXECUTION_RATIO
+        ):
+
+            lines.append(
+                ""
+            )
+
+            lines.append(
+                "🚨 وضعیت: "
+                "فرصت واجد شرایط هشدار است."
+            )
+
+        elif best["net_profit"] > 0:
+
+            lines.append(
+                ""
+            )
+
+            lines.append(
+                "🟡 وضعیت: "
+                "سود مثبت است، "
+                "اما به حد هشدار نرسیده."
+            )
+
+        else:
+
+            lines.append(
+                ""
+            )
+
+            lines.append(
+                "🔴 وضعیت: "
+                "بهترین مسیر بعد از کارمزد سودده نیست."
+            )
+
+        # ----------------------------------------------------
+        # TOP 3
+        # ----------------------------------------------------
+
+        lines.append(
+            ""
+        )
+
+        lines.append(
+            "🏆 سه مسیر برتر:"
+        )
+
+        for index, route in enumerate(
+            latest_routes[:3],
+            start=1
+        ):
+
+            lines.append(
+                f"{index}. "
+                f"{route['buy_exchange']} → "
+                f"{route['sell_exchange']} | "
+                f"{format_percent(route['profit_percent'])} | "
+                f"{format_toman(route['net_profit'])} تومان"
+            )
+
+    else:
+
+        lines.append(
+            ""
+        )
+
+        lines.append(
+            "ℹ️ هنوز مسیر قابل محاسبه‌ای وجود ندارد."
+        )
+
+        if selected_capital_toman is None:
+
+            lines.append(
+                "ابتدا موجودی را از دکمه Telegram انتخاب کنید."
+            )
+
+    # --------------------------------------------------------
+    # DAILY STATS
+    # --------------------------------------------------------
 
     today = now.strftime(
         "%Y-%m-%d"
-    )
-
-    week = now.strftime(
-        "%Y-W%W"
     )
 
     daily = stats[
@@ -2691,95 +2409,499 @@ def send_periodic_report(
     ].get(
         today,
         {
-            "route_checks": 0,
-            "positive": 0,
-            "qualified": 0,
-            "simulated_profit_toman": 0,
-            "alerts": 0,
+            "route_checks":
+                0,
+
+            "positive":
+                0,
+
+            "qualified":
+                0,
+
+            "simulated_profit_toman":
+                0,
+
+            "alerts":
+                0,
         }
     )
 
-    weekly = stats[
-        "weekly"
-    ].get(
-        week,
-        {
-            "route_checks": 0,
-            "positive": 0,
-            "qualified": 0,
-            "simulated_profit_toman": 0,
-            "alerts": 0,
-        }
+    lines.append(
+        ""
     )
 
-    message = (
-        "📊 گزارش آربیتراژ\n\n"
-
-        f"تاریخ: {today}\n"
-        f"ساعت: {current_time} تهران\n\n"
-
-        "امروز:\n"
-
-        f"مسیرهای بررسی‌شده: "
-        f"{daily['route_checks']}\n"
-
-        f"فرصت‌های سودده: "
-        f"{daily['positive']}\n"
-
-        f"فرصت‌های واجد شرایط: "
-        f"{daily['qualified']}\n"
-
-        f"هشدارهای ارسال‌شده: "
-        f"{daily['alerts']}\n"
-
-        f"سود شبیه‌سازی‌شده: "
-        f"{format_toman(daily['simulated_profit_toman'])} تومان\n\n"
-
-        "۷ روز اخیر:\n"
-
-        f"مسیرهای بررسی‌شده: "
-        f"{weekly['route_checks']}\n"
-
-        f"فرصت‌های سودده: "
-        f"{weekly['positive']}\n"
-
-        f"فرصت‌های واجد شرایط: "
-        f"{weekly['qualified']}\n"
-
-        f"هشدارهای ارسال‌شده: "
-        f"{weekly['alerts']}\n"
-
-        f"سود شبیه‌سازی‌شده: "
-        f"{format_toman(weekly['simulated_profit_toman'])} تومان\n\n"
-
-        "کل دوره:\n"
-
-        f"مسیرهای بررسی‌شده: "
-        f"{stats['total_route_checks']}\n"
-
-        f"فرصت‌های سودده: "
-        f"{stats['total_positive_opportunities']}\n"
-
-        f"فرصت‌های واجد شرایط: "
-        f"{stats['total_qualified_opportunities']}\n"
-
-        f"هشدارهای ارسال‌شده: "
-        f"{stats['total_alerts']}\n"
-
-        f"سود شبیه‌سازی‌شده کل: "
-        f"{format_toman(stats['total_simulated_profit_toman'])} تومان\n\n"
-
-        "⚠️ اعداد سود، شبیه‌سازی Order Book هستند "
-        "و به معنی سود واقعی انجام‌شده نیستند."
+    lines.append(
+        "📅 آمار امروز:"
     )
 
-    send_telegram(
-        message
+    lines.append(
+        f"• بررسی مسیر: "
+        f"{daily['route_checks']}"
+    )
+
+    lines.append(
+        f"• فرصت سودده: "
+        f"{daily['positive']}"
+    )
+
+    lines.append(
+        f"• فرصت واجد شرایط: "
+        f"{daily['qualified']}"
+    )
+
+    lines.append(
+        f"• هشدار ارسال‌شده: "
+        f"{daily['alerts']}"
+    )
+
+    lines.append(
+        f"• سود شبیه‌سازی‌شده: "
+        f"{format_toman(daily['simulated_profit_toman'])} تومان"
+    )
+
+    lines.append(
+        ""
+    )
+
+    lines.append(
+        "⚠️ فقط مانیتورینگ و شبیه‌سازی."
+    )
+
+    lines.append(
+        "❌ معامله واقعی انجام نمی‌شود."
+    )
+
+    return "\n".join(
+        lines
+    )
+
+
+def send_current_status_message(
+    stats=None
+):
+
+    if stats is None:
+
+        stats = load_stats()
+
+    return send_telegram(
+        build_current_status_message(
+            stats
+        )
     )
 
 
 # ============================================================
-# پیام شروع
+# REPORT SCHEDULE
+# ============================================================
+
+REPORT_HOURS = {
+    8,
+    10,
+    12,
+    14,
+    16,
+    18,
+    20,
+    22,
+}
+
+
+def send_periodic_report(
+    stats
+):
+
+    global last_report_key
+
+    now = now_tehran()
+
+    hour = now.hour
+
+    minute = now.minute
+
+    # --------------------------------------------------------
+    # 23:00 تا 07:59 هیچ گزارش دوره‌ای
+    # --------------------------------------------------------
+
+    if (
+        hour >= 23
+        or
+        hour < 8
+    ):
+
+        return
+
+    # --------------------------------------------------------
+    # فقط در ساعت‌های تعیین‌شده
+    # --------------------------------------------------------
+
+    if hour not in REPORT_HOURS:
+
+        return
+
+    # گزارش فقط در اولین چرخه همان ساعت
+    if minute != 0:
+
+        return
+
+    report_key = (
+        now.strftime(
+            "%Y-%m-%d-%H"
+        )
+    )
+
+    if (
+        last_report_key
+        == report_key
+    ):
+
+        return
+
+    last_report_key = report_key
+
+    send_current_status_message(
+        stats
+    )
+
+
+# ============================================================
+# ARBITRAGE ALERT
+# ============================================================
+
+def send_arbitrage_alert(
+    route,
+    stats
+):
+
+    key = route_key(
+        route["buy_exchange"],
+        route["sell_exchange"]
+    )
+
+    current = time.time()
+
+    previous = last_alert_time.get(
+        key,
+        0
+    )
+
+    if (
+        current - previous
+        < ALERT_COOLDOWN_SECONDS
+    ):
+
+        return False
+
+    if route["net_profit"] <= 0:
+
+        return False
+
+    if (
+        route["profit_percent"]
+        < MIN_PROFIT_PERCENT
+    ):
+
+        return False
+
+    if (
+        route["execution_ratio"]
+        < MIN_EXECUTION_RATIO
+    ):
+
+        return False
+
+    message = (
+        "🚨 فرصت آربیتراژ\n\n"
+
+        f"خرید از: "
+        f"{route['buy_exchange']}\n"
+
+        f"فروش در: "
+        f"{route['sell_exchange']}\n\n"
+
+        f"💰 موجودی محاسباتی: "
+        f"{format_toman(route['spent'])} تومان\n"
+
+        f"💱 مقدار USDT: "
+        f"{route['usdt']:.4f}\n\n"
+
+        f"💵 سود خالص: "
+        f"{format_toman(route['net_profit'])} تومان\n"
+
+        f"📈 سود: "
+        f"{format_percent(route['profit_percent'])}\n"
+
+        f"📦 اجرای Order Book: "
+        f"{route['execution_ratio'] * 100:.1f}%\n\n"
+
+        f"💲 میانگین خرید: "
+        f"{format_toman(route['buy_price'])}\n"
+
+        f"💲 میانگین فروش: "
+        f"{format_toman(route['sell_price'])}\n\n"
+
+        f"💳 کارمزد خرید: "
+        f"{route['buy_fee'] * 100:.3f}%\n"
+
+        f"💳 کارمزد فروش: "
+        f"{route['sell_fee'] * 100:.3f}%\n\n"
+
+        "⚠️ فقط هشدار و مانیتورینگ\n"
+        "❌ معامله واقعی انجام نمی‌شود."
+    )
+
+    if send_telegram(
+        message
+    ):
+
+        last_alert_time[
+            key
+        ] = current
+
+        today = now_tehran().strftime(
+            "%Y-%m-%d"
+        )
+
+        week = now_tehran().strftime(
+            "%Y-W%W"
+        )
+
+        stats[
+            "total_alerts"
+        ] += 1
+
+        if today in stats["daily"]:
+
+            stats[
+                "daily"
+            ][today][
+                "alerts"
+            ] += 1
+
+        if week in stats["weekly"]:
+
+            stats[
+                "weekly"
+            ][week][
+                "alerts"
+            ] += 1
+
+        save_stats(
+            stats
+        )
+
+        return True
+
+    return False
+
+
+# ============================================================
+# ALLOCATION ANALYSIS
+# ============================================================
+
+def calculate_capital_allocation(
+    routes,
+    total_capital
+):
+
+    if (
+        len(opportunity_history)
+        < MIN_ALLOCATION_OBSERVATIONS
+    ):
+
+        return None
+
+    scores = {
+        exchange: 0.0
+        for exchange in ENABLED_EXCHANGES
+    }
+
+    for route in routes:
+
+        if route["net_profit"] <= 0:
+
+            continue
+
+        key = route_key(
+            route["buy_exchange"],
+            route["sell_exchange"]
+        )
+
+        history = analyze_route_history(
+            key
+        )
+
+        if (
+            history["observations"]
+            < MIN_POSITIVE_OBSERVATIONS
+        ):
+
+            continue
+
+        observation_factor = min(
+            history["observations"]
+            / MIN_ALLOCATION_OBSERVATIONS,
+            1
+        )
+
+        positive_factor = (
+            history["positive_ratio"]
+        )
+
+        qualified_factor = (
+            history["qualified_ratio"]
+        )
+
+        execution_factor = (
+            history["average_execution_ratio"]
+        )
+
+        profit_factor = min(
+            max(
+                route["profit_percent"],
+                0
+            )
+            / max(
+                MIN_PROFIT_PERCENT,
+                0.1
+            ),
+            1
+        )
+
+        score = (
+            observation_factor * 0.15
+            +
+            positive_factor * 0.20
+            +
+            qualified_factor * 0.25
+            +
+            execution_factor * 0.20
+            +
+            profit_factor * 0.20
+        )
+
+        scores[
+            route["buy_exchange"]
+        ] += (
+            score * 0.60
+        )
+
+        scores[
+            route["sell_exchange"]
+        ] += (
+            score * 0.40
+        )
+
+    total_score = sum(
+        scores.values()
+    )
+
+    if total_score <= 0:
+
+        return None
+
+    weights = {
+        exchange:
+            scores[exchange]
+            / total_score
+
+        for exchange
+        in ENABLED_EXCHANGES
+    }
+
+    # سقف 70 درصد
+    for exchange in weights:
+
+        weights[
+            exchange
+        ] = min(
+            weights[exchange],
+            MAX_EXCHANGE_ALLOCATION_PERCENT
+        )
+
+    return {
+        exchange:
+            int(
+                total_capital
+                * weights[exchange]
+            )
+
+        for exchange
+        in ENABLED_EXCHANGES
+    }
+
+
+def print_capital_allocation(
+    routes
+):
+
+    if selected_capital_toman is None:
+
+        return
+
+    allocation = calculate_capital_allocation(
+        routes,
+        selected_capital_toman
+    )
+
+    print()
+
+    print(
+        "========== تحلیل سرمایه =========="
+    )
+
+    if allocation is None:
+
+        print(
+            "⏳ هنوز داده کافی برای "
+            "پیشنهاد تخصیص سرمایه نداریم."
+        )
+
+        print(
+            f"حداقل داده لازم: "
+            f"{MIN_ALLOCATION_OBSERVATIONS} چرخه"
+        )
+
+        print(
+            "================================="
+        )
+
+        return
+
+    for exchange in ENABLED_EXCHANGES:
+
+        amount = allocation.get(
+            exchange,
+            0
+        )
+
+        percentage = (
+            amount
+            / selected_capital_toman
+            * 100
+        )
+
+        print(
+            f"{exchange}: "
+            f"{format_toman(amount)} تومان "
+            f"({percentage:.1f}%)"
+        )
+
+    print(
+        "⚠️ این فقط پیشنهاد تحلیلی است."
+    )
+
+    print(
+        "❌ معامله واقعی انجام نمی‌شود."
+    )
+
+    print(
+        "================================="
+    )
+
+
+# ============================================================
+# STARTUP MESSAGE
 # ============================================================
 
 def send_startup_message():
@@ -2787,44 +2909,38 @@ def send_startup_message():
     message = (
         "🤖 ربات آربیتراژ شروع شد\n\n"
 
-        "حالت: فقط مانیتورینگ\n"
-        "معامله واقعی: خیر\n\n"
+        "📡 حالت: فقط مانیتورینگ\n"
 
-        "صرافی‌ها:\n"
+        "❌ معامله واقعی: خیر\n\n"
+
+        "🏦 صرافی‌ها:\n"
         "• Wallex\n"
         "• BitPin\n"
         "• Ramzinex\n\n"
 
-        f"سرمایه کل قابل استفاده: "
-        f"{format_toman(TOTAL_CAPITAL_TOMAN)} تومان\n"
-
-        f"حداکثر سرمایه هر فرصت: "
-        f"{format_toman(MAX_TRADE_AMOUNT_TOMAN)} تومان\n"
-
-        f"حداقل سود: "
+        f"📈 حداقل سود هشدار: "
         f"{format_percent(MIN_PROFIT_PERCENT)}\n"
 
-        f"فاصله بررسی: "
+        f"⏱️ فاصله بررسی: "
         f"{CHECK_INTERVAL_SECONDS} ثانیه\n"
 
-        f"نوع کارمزد: "
+        f"💳 نوع کارمزد: "
         f"{ORDER_TYPE}\n\n"
 
-        f"حداقل داده برای تحلیل سرمایه: "
-        f"{MIN_ALLOCATION_OBSERVATIONS} مشاهده\n"
+        "💰 موجودی هنوز انتخاب نشده.\n"
+        "از دکمه زیر انتخاب کنید.\n\n"
 
-        f"حداکثر تمرکز روی یک صرافی: "
-        f"{MAX_EXCHANGE_ALLOCATION_PERCENT:.0f}%\n\n"
+        "📊 گزارش وضعیت: هر دو ساعت\n"
 
-        "تحلیل سرمایه:\n"
-        "بر اساس تکرار فرصت + سود + نقدشوندگی "
-        "+ ثبات + قابلیت اجرا\n\n"
+        "🌙 گزارش دوره‌ای: "
+        "23:00 تا 08:00 متوقف\n"
 
-        "منطقه زمانی: تهران"
+        "⏰ چرخه گزارش از 18:00 محاسبه می‌شود."
     )
 
     send_telegram(
-        message
+        message,
+        capital_keyboard()
     )
 
 
@@ -2833,6 +2949,9 @@ def send_startup_message():
 # ============================================================
 
 def main():
+
+    global latest_orderbooks
+    global latest_routes
 
     print()
 
@@ -2853,17 +2972,12 @@ def main():
     )
 
     print(
-        f"💰 سرمایه کل قابل استفاده: "
-        f"{format_toman(TOTAL_CAPITAL_TOMAN)} تومان"
+        "💰 موجودی: "
+        "از داخل Telegram انتخاب می‌شود"
     )
 
     print(
-        f"💵 حداکثر سرمایه هر فرصت: "
-        f"{format_toman(MAX_TRADE_AMOUNT_TOMAN)} تومان"
-    )
-
-    print(
-        f"📈 حداقل سود: "
+        f"📈 حداقل سود هشدار: "
         f"{format_percent(MIN_PROFIT_PERCENT)}"
     )
 
@@ -2878,19 +2992,8 @@ def main():
     )
 
     print(
-        f"📊 حداقل مشاهده برای تخصیص سرمایه: "
-        f"{MIN_ALLOCATION_OBSERVATIONS}"
-    )
-
-    print(
-        f"🛑 حداکثر تمرکز یک صرافی: "
-        f"{MAX_EXCHANGE_ALLOCATION_PERCENT:.0f}%"
-    )
-
-    print(
         "🏦 صرافی‌ها: "
-        +
-        ", ".join(
+        + ", ".join(
             ENABLED_EXCHANGES
         )
     )
@@ -2899,9 +3002,11 @@ def main():
         "================================================"
     )
 
+    stats = load_stats()
+
     send_startup_message()
 
-    stats = load_stats()
+    start_telegram_listener()
 
     while True:
 
@@ -2921,6 +3026,10 @@ def main():
                 "ربات به شکل امن متوقف شد."
             )
 
+            save_stats(
+                stats
+            )
+
             break
 
         cycle_start = time.time()
@@ -2938,11 +3047,15 @@ def main():
         )
 
         print(
-            "🔎 در حال دریافت Order Book..."
+            "🔎 دریافت Order Book..."
         )
 
         orderbooks = (
             get_all_orderbooks()
+        )
+
+        latest_orderbooks = (
+            orderbooks
         )
 
         print(
@@ -2957,30 +3070,63 @@ def main():
                 orderbooks
             )
 
-            routes = calculate_all_routes(
-                orderbooks,
-                MAX_TRADE_AMOUNT_TOMAN
-            )
+            # ------------------------------------------------
+            # اگر موجودی انتخاب نشده باشد
+            # ------------------------------------------------
+
+            if selected_capital_toman is None:
+
+                routes = []
+
+                latest_routes = []
+
+                print()
+
+                print(
+                    "⚠️ موجودی هنوز انتخاب نشده."
+                )
+
+                print(
+                    "از Telegram مبلغ موجودی "
+                    "را انتخاب کنید."
+                )
+
+            else:
+
+                # --------------------------------------------
+                # محاسبه مسیرها
+                # --------------------------------------------
+
+                routes = calculate_all_routes(
+                    orderbooks,
+                    selected_capital_toman
+                )
+
+                latest_routes = routes
 
             # ------------------------------------------------
-            # ثبت تاریخچه
+            # HISTORY
             # ------------------------------------------------
 
             update_opportunity_history(
                 routes
             )
 
+            # ------------------------------------------------
+            # ROUTES
+            # ------------------------------------------------
+
             print_routes(
                 routes
             )
 
             # ------------------------------------------------
-            # بهترین مسیر فعلی
+            # BEST ROUTE
             # ------------------------------------------------
 
             if routes:
 
-                best_route = routes[0]
+                best = routes[0]
 
                 print()
 
@@ -2989,85 +3135,81 @@ def main():
                 )
 
                 print(
-                    f"{best_route['buy_exchange']}"
+                    f"{best['buy_exchange']}"
                     " → "
-                    f"{best_route['sell_exchange']}"
+                    f"{best['sell_exchange']}"
                 )
 
                 print(
-                    f"💰 سود خالص: "
-                    f"{format_toman(best_route['net_profit'])} تومان"
+                    f"💰 موجودی انتخاب‌شده: "
+                    f"{format_toman(selected_capital_toman)} تومان"
+                )
+
+                print(
+                    f"💵 سود خالص: "
+                    f"{format_toman(best['net_profit'])} تومان"
                 )
 
                 print(
                     f"📈 درصد سود: "
-                    f"{format_percent(best_route['profit_percent'])}"
+                    f"{format_percent(best['profit_percent'])}"
                 )
 
                 print(
-                    f"📦 قابلیت اجرای Order Book: "
-                    f"{best_route['execution_ratio'] * 100:.1f}%"
-                )
-
-                route_key = make_route_key(
-                    best_route["buy_exchange"],
-                    best_route["sell_exchange"]
-                )
-
-                history = analyze_route_history(
-                    route_key
+                    f"🎯 حد هشدار: "
+                    f"{format_percent(MIN_PROFIT_PERCENT)}"
                 )
 
                 print(
-                    f"🔁 تعداد مشاهده این مسیر: "
-                    f"{history['observations']}"
-                )
-
-                print(
-                    f"📈 دفعات سودده: "
-                    f"{history['positive_observations']}"
-                )
-
-                print(
-                    f"🎯 دفعات رسیدن به حداقل سود: "
-                    f"{history['qualified_observations']}"
+                    f"📦 اجرای Order Book: "
+                    f"{best['execution_ratio'] * 100:.1f}%"
                 )
 
                 if (
-                    best_route["profit_percent"]
+                    best["net_profit"] > 0
+                    and
+                    best["profit_percent"]
                     >= MIN_PROFIT_PERCENT
                     and
-                    best_route["net_profit"]
-                    > 0
-                    and
-                    best_route["execution_ratio"]
+                    best["execution_ratio"]
                     >= MIN_EXECUTION_RATIO
                 ):
 
                     print(
-                        "🚨 این مسیر به حداقل سود "
-                        "و حداقل قابلیت اجرای تعیین‌شده رسیده است."
+                        "🚨 فرصت واجد شرایط هشدار است."
                     )
 
-                    alert_sent = send_arbitrage_alert(
-                        best_route
-                    )
+                    if send_arbitrage_alert(
+                        best,
+                        stats
+                    ):
 
-                    if alert_sent:
-
-                        record_alert_stat(
-                            stats
+                        print(
+                            "📨 هشدار Telegram ارسال شد."
                         )
+
+                elif best["net_profit"] > 0:
+
+                    print(
+                        "🟡 سود مثبت است، "
+                        "اما به حد هشدار نرسیده."
+                    )
 
                 else:
 
                     print(
-                        "ℹ️ فعلاً فرصت واجد شرایط "
-                        "برای هشدار وجود ندارد."
+                        "🔴 بهترین مسیر بعد از "
+                        "کارمزد سودده نیست."
                     )
 
+            else:
+
+                print(
+                    "ℹ️ مسیر قابل محاسبه وجود ندارد."
+                )
+
             # ------------------------------------------------
-            # تحلیل تخصیص سرمایه
+            # CAPITAL ANALYSIS
             # ------------------------------------------------
 
             print_capital_allocation(
@@ -3075,7 +3217,7 @@ def main():
             )
 
             # ------------------------------------------------
-            # آمار
+            # STATS
             # ------------------------------------------------
 
             update_stats(
@@ -3085,12 +3227,14 @@ def main():
 
         else:
 
+            latest_routes = []
+
             print(
                 "❌ هیچ Order Book معتبری دریافت نشد."
             )
 
         # ----------------------------------------------------
-        # گزارش دوره‌ای
+        # PERIODIC REPORT
         # ----------------------------------------------------
 
         send_periodic_report(
@@ -3098,7 +3242,7 @@ def main():
         )
 
         # ----------------------------------------------------
-        # زمان خواب
+        # SLEEP
         # ----------------------------------------------------
 
         elapsed = (
@@ -3118,7 +3262,7 @@ def main():
 
 
 # ============================================================
-# اجرای برنامه
+# RUN
 # ============================================================
 
 if __name__ == "__main__":
