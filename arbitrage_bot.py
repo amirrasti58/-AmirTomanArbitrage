@@ -15,9 +15,6 @@ USDT / TOMAN
 - موجودی پیش‌فرض ۵۰ میلیون تومان
 - گزارش وضعیت هر دو ساعت
 - عدم ارسال گزارش دوره‌ای از 23:00 تا 08:00
-- چرخه گزارش:
-  18:00 / 20:00 / 22:00
-  سپس روز بعد 08:00 / 10:00 / ...
 - هشدار فرصت واقعی در صورت عبور از حد سود
 - آمار روزانه / هفتگی / کل
 - پیشنهاد تخصیص سرمایه فقط پس از داده کافی
@@ -217,6 +214,13 @@ def format_toman_signed(value):
     return f"{value:,.0f}"
 
 
+def format_usdt(value):
+    if value is None:
+        return "-"
+
+    return f"{value:,.1f}"
+
+
 def normalize_digits(text):
     return (
         str(text)
@@ -234,16 +238,39 @@ def normalize_digits(text):
 
 
 # ============================================================
-# فرمت وضعیت Order Book
+# نشانگر سود
+# ============================================================
+
+def get_profit_indicator(value):
+    """
+    منفی = قرمز
+    مثبت = سبز
+    صفر = خنثی
+    """
+
+    if value is None:
+        return "⚪"
+
+    if value < 0:
+        return "🔴"
+
+    if value > 0:
+        return "🟢"
+
+    return "⚪"
+
+
+# ============================================================
+# وضعیت Order Book
 # ============================================================
 
 def format_orderbook_execution(route):
     """
-    اگر کل حجم مورد نیاز قابل اجرا باشد:
+    فقط وقتی 100 درصد حجم موردنظر قابل اجرا باشد:
         قابلیت اجرای کامل را دارد
 
-    اگر ناقص باشد:
-        مثلا 90٪ Order Book اجرا می‌گردد
+    در غیر این صورت:
+        درصد واقعی اجرای Order Book نمایش داده می‌شود.
     """
 
     ratio = route.get(
@@ -251,80 +278,12 @@ def format_orderbook_execution(route):
         0
     )
 
-    if ratio >= 1.0:
-        return "قابلیت اجرای کامل را دارد"
+    if ratio >= 0.999999:
+        return "📦 اردربوک قابلیت اجرای کامل را دارد"
 
     return (
-        f"{ratio * 100:.0f}٪ Order Book اجرا می‌گردد"
+        f"📦 {ratio * 100:.0f}٪ اردربوک اجرا می‌گردد"
     )
-
-
-def format_route_side(
-    exchange,
-    amount_toman,
-    usdt_amount,
-    average_price,
-    orderbook_levels,
-    action
-):
-    """
-    توضیح یک سمت معامله.
-
-    خرید:
-    خرید 50,000,000 تومان از Wallex
-    با 1 لول Order Book
-
-    فروش:
-    فروش 219.3 تتر در Wallex
-    با 1 لول Order Book
-    """
-
-    if action == "buy":
-
-        return (
-            f"خرید {format_toman(amount_toman)} تومان "
-            f"از {exchange} "
-            f"با {orderbook_levels} لول Order Book"
-        )
-
-    return (
-        f"فروش {usdt_amount:.1f} تتر "
-        f"در {exchange} "
-        f"با {orderbook_levels} لول Order Book"
-    )
-
-
-def get_orderbook_levels_for_amount(
-    levels,
-    target_amount,
-    is_buy
-):
-    """
-    تعداد واقعی لول‌هایی که برای حجم موردنیاز
-    مصرف شده‌اند.
-    """
-
-    remaining = target_amount
-    used_levels = 0
-
-    for price, volume in levels:
-
-        if remaining <= 0:
-            break
-
-        used_levels += 1
-
-        if is_buy:
-
-            level_value = price * volume
-
-        else:
-
-            level_value = volume
-
-        remaining -= level_value
-
-    return used_levels
 
 
 # ============================================================
@@ -686,18 +645,6 @@ def get_fee_currency(
     exchange,
     side
 ):
-    """
-    واحد کارمزد:
-
-    خرید:
-    معمولاً تتر
-
-    فروش:
-    معمولاً تومان
-
-    اگر مشخص نباشد:
-    تومان/تتر
-    """
 
     if exchange in FEES:
 
@@ -752,6 +699,11 @@ def calculate_buy(
         received_usdt * (1 - fee)
     )
 
+    fee_usdt = (
+        received_usdt
+        - usdt_after_fee
+    )
+
     average_price = (
         spent_toman / received_usdt
     )
@@ -764,6 +716,7 @@ def calculate_buy(
         "spent_toman": spent_toman,
         "usdt_before_fee": received_usdt,
         "usdt": usdt_after_fee,
+        "fee_usdt": fee_usdt,
         "average_price": average_price,
         "unfilled_toman": remaining_toman,
         "execution_ratio": execution_ratio,
@@ -812,6 +765,11 @@ def calculate_sell(
         received_toman * (1 - fee)
     )
 
+    fee_toman = (
+        received_toman
+        - received_after_fee
+    )
+
     average_price = (
         received_toman / sold_usdt
     )
@@ -824,6 +782,7 @@ def calculate_sell(
         "sold_usdt": sold_usdt,
         "received_toman": received_after_fee,
         "received_before_fee": received_toman,
+        "fee_toman": fee_toman,
         "average_price": average_price,
         "unfilled_usdt": remaining_usdt,
         "execution_ratio": execution_ratio,
@@ -906,30 +865,39 @@ def calculate_route(
     )
 
     return {
-        "buy_exchange": buy_exchange,
-        "sell_exchange": sell_exchange,
 
-        "buy_price": buy_result[
-            "average_price"
-        ],
+        "buy_exchange":
+            buy_exchange,
 
-        "sell_price": sell_result[
-            "average_price"
-        ],
+        "sell_exchange":
+            sell_exchange,
 
-        "usdt": buy_result["usdt"],
+        "buy_price":
+            buy_result["average_price"],
 
-        "spent": actual_spent,
+        "sell_price":
+            sell_result["average_price"],
 
-        "received": final_toman,
+        "usdt":
+            buy_result["usdt"],
 
-        "net_profit": net_profit,
+        "spent":
+            actual_spent,
 
-        "profit_percent": profit_percent,
+        "received":
+            final_toman,
 
-        "buy_fee": buy_fee,
+        "net_profit":
+            net_profit,
 
-        "sell_fee": sell_fee,
+        "profit_percent":
+            profit_percent,
+
+        "buy_fee":
+            buy_fee,
+
+        "sell_fee":
+            sell_fee,
 
         "buy_fee_currency":
             get_fee_currency(
@@ -943,15 +911,20 @@ def calculate_route(
                 "sell"
             ),
 
-        "buy_unfilled_toman": (
-            buy_result["unfilled_toman"]
-        ),
+        "buy_fee_amount_usdt":
+            buy_result["fee_usdt"],
 
-        "sell_unfilled_usdt": (
-            sell_result["unfilled_usdt"]
-        ),
+        "sell_fee_amount_toman":
+            sell_result["fee_toman"],
 
-        "execution_ratio": execution_ratio,
+        "buy_unfilled_toman":
+            buy_result["unfilled_toman"],
+
+        "sell_unfilled_usdt":
+            sell_result["unfilled_usdt"],
+
+        "execution_ratio":
+            execution_ratio,
 
         "buy_orderbook_levels":
             buy_result["used_levels"],
@@ -959,10 +932,11 @@ def calculate_route(
         "sell_orderbook_levels":
             sell_result["used_levels"],
 
-        "fully_executable": (
-            execution_ratio
-            >= MIN_EXECUTION_RATIO
-        ),
+        "fully_executable":
+            (
+                execution_ratio
+                >= MIN_EXECUTION_RATIO
+            ),
     }
 
 
@@ -1176,27 +1150,26 @@ def update_opportunity_history(
         snapshot[key] = {
             "time": now,
 
-            "profit_percent": (
-                route["profit_percent"]
-            ),
+            "profit_percent":
+                route["profit_percent"],
 
-            "net_profit": (
-                route["net_profit"]
-            ),
+            "net_profit":
+                route["net_profit"],
 
-            "spent": route["spent"],
+            "spent":
+                route["spent"],
 
-            "execution_ratio": (
-                route["execution_ratio"]
-            ),
+            "execution_ratio":
+                route["execution_ratio"],
 
-            "qualified": (
-                route["net_profit"] > 0
-                and route["profit_percent"]
-                >= MIN_PROFIT_PERCENT
-                and route["execution_ratio"]
-                >= MIN_EXECUTION_RATIO
-            ),
+            "qualified":
+                (
+                    route["net_profit"] > 0
+                    and route["profit_percent"]
+                    >= MIN_PROFIT_PERCENT
+                    and route["execution_ratio"]
+                    >= MIN_EXECUTION_RATIO
+                ),
         }
 
     opportunity_history.append(
@@ -1304,25 +1277,32 @@ def analyze_route_history(
     )
 
     return {
-        "observations": len(observations),
-        "positive_observations": (
-            len(positive)
-        ),
-        "qualified_observations": (
-            len(qualified)
-        ),
-        "positive_ratio": positive_ratio,
-        "qualified_ratio": qualified_ratio,
-        "average_profit_percent": (
-            average_profit
-        ),
-        "average_net_profit": (
-            average_net_profit
-        ),
-        "average_execution_ratio": (
-            average_execution
-        ),
-        "stability_score": stability_score,
+        "observations":
+            len(observations),
+
+        "positive_observations":
+            len(positive),
+
+        "qualified_observations":
+            len(qualified),
+
+        "positive_ratio":
+            positive_ratio,
+
+        "qualified_ratio":
+            qualified_ratio,
+
+        "average_profit_percent":
+            average_profit,
+
+        "average_net_profit":
+            average_net_profit,
+
+        "average_execution_ratio":
+            average_execution,
+
+        "stability_score":
+            stability_score,
     }
 
 
@@ -2426,12 +2406,13 @@ def send_arbitrage_alert(
         f"{format_toman(selected_capital_toman)} تومان\n"
 
         f"💵 سود خالص: "
+        f"{get_profit_indicator(route['net_profit'])} "
         f"{format_toman_signed(route['net_profit'])} تومان\n"
 
         f"📈 سود: "
+        f"{get_profit_indicator(route['profit_percent'])} "
         f"{format_percent(route['profit_percent'])}\n"
 
-        f"📦 Order Book: "
         f"{format_orderbook_execution(route)}\n\n"
 
         f"💲 خرید: "
@@ -2440,17 +2421,17 @@ def send_arbitrage_alert(
         f"با {route['buy_orderbook_levels']} لول Order Book\n"
 
         f"💲 فروش: "
-        f"{route['usdt']:.1f} تتر "
+        f"{format_usdt(route['usdt'])} تتر "
         f"در {route['sell_exchange']} "
         f"با {route['sell_orderbook_levels']} لول Order Book\n\n"
 
         f"💳 کارمزد خرید: "
         f"{route['buy_fee'] * 100:.1f}% "
-        f"({route['buy_fee_currency']})\n"
+        f"= {format_usdt(route['buy_fee_amount_usdt'])} تتر\n"
 
         f"💳 کارمزد فروش: "
         f"{route['sell_fee'] * 100:.1f}% "
-        f"({route['sell_fee_currency']})\n\n"
+        f"= {format_toman(route['sell_fee_amount_toman'])} تومان\n\n"
 
         f"🔁 سابقه مسیر:\n"
 
@@ -2559,6 +2540,10 @@ def build_current_status_message(
             if selected_capital_toman is not None
             else "❌ هنوز انتخاب نشده"
         ),
+
+        f"🎯 حد هشدار سود: "
+        f"{MIN_PROFIT_PERCENT:.1f}%",
+
     ]
 
     # ========================================================
@@ -2578,7 +2563,42 @@ def build_current_status_message(
             route_key
         )
 
+        # ----------------------------------------------------
+        # وضعیت بهترین مسیر - ابتدای بخش
+        # ----------------------------------------------------
+
+        if (
+            best["net_profit"] > 0
+            and best["profit_percent"]
+            >= MIN_PROFIT_PERCENT
+            and best["execution_ratio"]
+            >= MIN_EXECUTION_RATIO
+        ):
+
+            status_line = (
+                "🚨 وضعیت: بهترین مسیر فعلی "
+                "بعد از کارمزد سودده و واجد شرایط هشدار است."
+            )
+
+        elif best["net_profit"] > 0:
+
+            status_line = (
+                "🟢 وضعیت: بهترین مسیر فعلی "
+                "بعد از کارمزد سودده است، اما به حد هشدار نرسیده."
+            )
+
+        else:
+
+            status_line = (
+                "🔴 وضعیت: بهترین مسیر فعلی "
+                "بعد از کارمزد سودده نیست."
+            )
+
         lines.extend([
+
+            "",
+
+            status_line,
 
             "",
 
@@ -2590,22 +2610,17 @@ def build_current_status_message(
             "",
 
             f"💵 سود خالص: "
+            f"{get_profit_indicator(best['net_profit'])} "
             f"{format_toman_signed(best['net_profit'])} تومان",
 
             f"📈 درصد سود: "
+            f"{get_profit_indicator(best['profit_percent'])} "
             f"{format_percent(best['profit_percent'])}",
 
-            f"🎯 حد هشدار: "
-            f"{MIN_PROFIT_PERCENT:.1f}%",
-
-            f"📦 وضعیت Order Book: "
-            f"{format_orderbook_execution(best)}",
+            format_orderbook_execution(best),
 
             f"💰 مقدار قابل خرید با مبلغ موجودی: "
-            f"{format_toman(best['spent'])} تومان",
-
-            f"💱 مقدار USDT: "
-            f"{best['usdt']:.1f} تتر",
+            f"{format_usdt(best['usdt'])} تتر",
 
             "",
 
@@ -2614,13 +2629,15 @@ def build_current_status_message(
             (
                 f"• خرید {format_toman(best['spent'])} تومان "
                 f"از {best['buy_exchange']} "
-                f"با {best['buy_orderbook_levels']} لول Order Book"
+                f"با {best['buy_orderbook_levels']} لول Order Book "
+                f"— میانگین {format_toman(best['buy_price'])} تومان"
             ),
 
             (
-                f"• فروش {best['usdt']:.1f} تتر "
+                f"• فروش {format_usdt(best['usdt'])} تتر "
                 f"در {best['sell_exchange']} "
-                f"با {best['sell_orderbook_levels']} لول Order Book"
+                f"با {best['sell_orderbook_levels']} لول Order Book "
+                f"— میانگین {format_toman(best['sell_price'])} تومان"
             ),
 
             "",
@@ -2630,13 +2647,13 @@ def build_current_status_message(
             (
                 f"• خرید: "
                 f"{best['buy_fee'] * 100:.1f}% "
-                f"({best['buy_fee_currency']})"
+                f"= {format_usdt(best['buy_fee_amount_usdt'])} تتر"
             ),
 
             (
                 f"• فروش: "
                 f"{best['sell_fee'] * 100:.1f}% "
-                f"({best['sell_fee_currency']})"
+                f"= {format_toman(best['sell_fee_amount_toman'])} تومان"
             ),
 
             "",
@@ -2655,32 +2672,6 @@ def build_current_status_message(
             f"• میانگین سود: "
             f"{format_percent(history['average_profit_percent'])}",
         ])
-
-        if (
-            best["net_profit"] > 0
-            and best["profit_percent"]
-            >= MIN_PROFIT_PERCENT
-            and best["execution_ratio"]
-            >= MIN_EXECUTION_RATIO
-        ):
-
-            lines.append(
-                "🚨 وضعیت: فرصت واجد شرایط هشدار است."
-            )
-
-        elif best["net_profit"] > 0:
-
-            lines.append(
-                "ℹ️ وضعیت: سود مثبت است، "
-                "اما هنوز به حد هشدار نرسیده."
-            )
-
-        else:
-
-            lines.append(
-                "🔴 وضعیت: بهترین مسیر فعلی "
-                "بعد از کارمزد سودده نیست."
-            )
 
         # ====================================================
         # سه مسیر برتر
@@ -2706,28 +2697,17 @@ def build_current_status_message(
                 route["net_profit"]
             )
 
-            if route["profit_percent"] < 0:
-                profit_display = (
-                    f"🔴{profit_text}"
-                )
-            else:
-                profit_display = profit_text
-
-            if route["net_profit"] < 0:
-                net_display = (
-                    f"🔴{net_text} تومان"
-                )
-            else:
-                net_display = (
-                    f"{net_text} تومان"
-                )
+            indicator = get_profit_indicator(
+                route["net_profit"]
+            )
 
             lines.append(
                 f"{index}. "
+                f"{indicator} "
                 f"{route['buy_exchange']} → "
                 f"{route['sell_exchange']} | "
-                f"{profit_display} | "
-                f"{net_display}"
+                f"{profit_text} | "
+                f"{net_text} تومان"
             )
 
     else:
@@ -2772,8 +2752,8 @@ def build_current_status_message(
 
             lines.append(
                 f"• {exchange}: ✅ "
-                f"قیمت خرید {format_toman(ask)} | "
-                f"قیمت فروش {format_toman(bid)}"
+                f"قیمت فروش {format_toman(ask)} | "
+                f"قیمت خرید {format_toman(bid)}"
             )
 
         else:
@@ -3091,22 +3071,37 @@ def main():
 
                 print(
                     f"💵 سود خالص: "
+                    f"{get_profit_indicator(best['net_profit'])} "
                     f"{format_toman_signed(best['net_profit'])} تومان"
                 )
 
                 print(
                     f"📈 درصد سود: "
+                    f"{get_profit_indicator(best['profit_percent'])} "
                     f"{format_percent(best['profit_percent'])}"
                 )
 
                 print(
-                    f"🎯 حد هشدار: "
-                    f"{format_percent(MIN_PROFIT_PERCENT)}"
+                    format_orderbook_execution(best)
                 )
 
                 print(
-                    f"📦 قابلیت اجرای Order Book: "
-                    f"{best['execution_ratio'] * 100:.1f}%"
+                    f"💰 مقدار قابل خرید با مبلغ موجودی: "
+                    f"{format_usdt(best['usdt'])} تتر"
+                )
+
+                print(
+                    f"💲 خرید: "
+                    f"{format_toman(best['spent'])} تومان "
+                    f"از {best['buy_exchange']} "
+                    f"با {best['buy_orderbook_levels']} لول Order Book"
+                )
+
+                print(
+                    f"💲 فروش: "
+                    f"{format_usdt(best['usdt'])} تتر "
+                    f"در {best['sell_exchange']} "
+                    f"با {best['sell_orderbook_levels']} لول Order Book"
                 )
 
                 if (
