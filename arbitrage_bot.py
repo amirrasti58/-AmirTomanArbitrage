@@ -21,8 +21,8 @@ USDT / TOMAN
 - هشدار فرصت واقعی در صورت عبور از حد سود
 - آمار روزانه / هفتگی / کل
 - پیشنهاد تخصیص سرمایه فقط پس از داده کافی
-- نمایش سود با نشانگر وضعیت
-- نمایش جزئیات خرید و فروش به صورت جدول
+- نمایش سود و زیان با نشانگر وضعیت
+- نمایش جزئیات خرید و فروش به صورت مناسب موبایل
 ============================================================
 """
 
@@ -190,35 +190,46 @@ def format_toman(value):
 
 def format_percent(value):
     """
+    نمایش درصد بدون علامت منفی.
+
     مثبت:
     1.2%
 
     منفی:
-    1.2%-
+    0.03%
 
-    علامت منفی در نمایش حذف می‌شود و
-    وضعیت با نشانگر جداگانه نمایش داده می‌شود.
+    علامت وضعیت توسط get_profit_indicator()
+    نمایش داده می‌شود.
     """
 
     if value is None:
         return "-"
 
-    return f"{abs(value):.1f}%"
+    return f"{abs(value):.2f}%"
 
 
 def format_toman_signed(value):
     """
-    برای نمایش سود/زیان فقط مقدار عددی نمایش داده می‌شود.
-    وضعیت مثبت یا منفی با نشانگر رنگی مشخص می‌شود.
+    نمایش عدد سود/زیان بدون علامت منفی.
 
-    مثال:
-    134,977
+    مثبت:
+    143,371
+
+    منفی:
+    143,371-
+
+    علامت منفی عمداً پشت عدد قرار می‌گیرد.
     """
 
     if value is None:
         return "-"
 
-    return f"{abs(value):,.0f}"
+    number = f"{abs(value):,.0f}"
+
+    if value < 0:
+        return f"{number}-"
+
+    return number
 
 
 def format_usdt(value):
@@ -245,7 +256,7 @@ def normalize_digits(text):
 
 
 # ============================================================
-# نشانگر سود
+# نمایش سود / زیان
 # ============================================================
 
 def get_profit_indicator(value):
@@ -260,6 +271,83 @@ def get_profit_indicator(value):
         return "🟢"
 
     return "⚪"
+
+
+def get_profit_label(value):
+    """
+    عنوان مناسب برای سود یا زیان.
+
+    مثبت:
+    سود خالص
+
+    منفی:
+    زیان خالص
+
+    صفر:
+    سود خالص
+    """
+
+    if value is not None and value < 0:
+        return "زیان خالص"
+
+    return "سود خالص"
+
+
+def get_profit_percent_label(value):
+    """
+    عنوان مناسب برای درصد سود یا زیان.
+    """
+
+    if value is not None and value < 0:
+        return "درصد زیان"
+
+    return "درصد سود"
+
+
+def format_profit_line(value):
+    """
+    مثال مثبت:
+
+    🟢 سود خالص: 600,000 تومان
+
+    مثال منفی:
+
+    🔴 زیان خالص: 143,371- تومان
+    """
+
+    indicator = get_profit_indicator(value)
+    label = get_profit_label(value)
+    amount = format_toman_signed(value)
+
+    return (
+        f"{indicator} {label}: "
+        f"{amount} تومان"
+    )
+
+
+def format_profit_percent_line(value):
+    """
+    مثال مثبت:
+
+    🟢 درصد سود: 1.20%
+
+    مثال منفی:
+
+    🔴 درصد زیان: 0.03%-
+    """
+
+    indicator = get_profit_indicator(value)
+    label = get_profit_percent_label(value)
+
+    percent = format_percent(value)
+
+    if value is not None and value < 0:
+        percent = f"{percent}-"
+
+    return (
+        f"{indicator} {label}: "
+        f"{percent}"
+    )
 
 
 # ============================================================
@@ -1020,8 +1108,8 @@ def print_market_snapshot(
 
         print(
             f"{exchange}: "
-            f"قیمت خرید: {format_toman(bid)} | "
-            f"قیمت فروش: {format_toman(ask)}"
+            f"قیمت خرید (Ask): {format_toman(ask)} | "
+            f"قیمت فروش (Bid): {format_toman(bid)}"
         )
 
         if ask is not None and (
@@ -1049,7 +1137,7 @@ def print_market_snapshot(
     if best_ask:
 
         print(
-            f"🟢 کمترین قیمت فروش: "
+            f"🟢 کمترین قیمت خرید: "
             f"{best_ask[1]} → "
             f"{format_toman(best_ask[0])} تومان"
         )
@@ -1057,7 +1145,7 @@ def print_market_snapshot(
     if best_bid:
 
         print(
-            f"🔴 بیشترین قیمت خرید: "
+            f"🔴 بیشترین قیمت فروش: "
             f"{best_bid[1]} → "
             f"{format_toman(best_bid[0])} تومان"
         )
@@ -1105,16 +1193,33 @@ def print_routes(routes):
             route["net_profit"]
         )
 
+        profit_label = get_profit_label(
+            route["net_profit"]
+        )
+
+        percent_label = get_profit_percent_label(
+            route["profit_percent"]
+        )
+
+        percent_text = format_percent(
+            route["profit_percent"]
+        )
+
+        if route["profit_percent"] < 0:
+            percent_text = (
+                f"{percent_text}-"
+            )
+
         print(
             f"{index}. "
             f"{indicator} "
             f"{route['buy_exchange']} → "
             f"{route['sell_exchange']} | "
-            f"سود "
-            f"{format_percent(route['profit_percent'])} | "
-            f"خالص "
+            f"{profit_label}: "
             f"{format_toman_signed(route['net_profit'])} تومان | "
-            f"اجرا "
+            f"{percent_label}: "
+            f"{percent_text} | "
+            f"اجرا: "
             f"{route['execution_ratio'] * 100:.1f}% "
             f"({execution})"
         )
@@ -2716,34 +2821,28 @@ def send_arbitrage_alert(
         f"💡 حداقل سود خالص: "
         f"{format_toman(MIN_NET_PROFIT_TOMAN)} تومان\n"
 
-        f"سود خالص: "
-        f"{get_profit_indicator(route['net_profit'])} "
-        f"{format_toman_signed(route['net_profit'])} تومان\n"
+        f"{format_profit_line(route['net_profit'])}\n"
 
-        f"درصد سود: "
-        f"{get_profit_indicator(route['profit_percent'])} "
-        f"{format_percent(route['profit_percent'])}\n"
+        f"{format_profit_percent_line(route['profit_percent'])}\n"
 
         f"{format_orderbook_execution(route)}\n\n"
 
-        "📊 جزئیات خرید و فروش:\n\n"
+        "📋 جزئیات خرید و فروش:\n\n"
 
-        f"خرید از {route['buy_exchange']}: "
-        f"{format_toman(route['spent'])} تومان\n"
-
-        f"تعداد لول خرید: "
-        f"{route['buy_orderbook_levels']}\n"
-
-        f"میانگین خرید: "
+        f"📥 خرید\n"
+        f"صرافی: {route['buy_exchange']}\n"
+        f"مبلغ: {format_toman(route['spent'])} تومان\n"
+        f"تعداد لول: "
+        f"{route['buy_orderbook_levels']} لول\n"
+        f"میانگین: "
         f"{format_toman(route['buy_price'])} تومان\n\n"
 
-        f"فروش در {route['sell_exchange']}: "
-        f"{format_usdt(route['usdt'])} تتر\n"
-
-        f"تعداد لول فروش: "
-        f"{route['sell_orderbook_levels']}\n"
-
-        f"میانگین فروش: "
+        f"📤 فروش\n"
+        f"صرافی: {route['sell_exchange']}\n"
+        f"مبلغ: {format_usdt(route['usdt'])} تتر\n"
+        f"تعداد لول: "
+        f"{route['sell_orderbook_levels']} لول\n"
+        f"میانگین: "
         f"{format_toman(route['sell_price'])} تومان\n\n"
 
         f"💳 کارمزد خرید: "
@@ -2824,7 +2923,7 @@ REPORT_TIMES = {
 
 
 # ============================================================
-# جدول جزئیات خرید و فروش
+# جزئیات خرید و فروش - مناسب موبایل
 # ============================================================
 
 def build_trade_details_table(
@@ -2851,22 +2950,27 @@ def build_trade_details_table(
     )
 
     buy_average = (
-        f"{format_toman(route['buy_price'])}"
+        f"{format_toman(route['buy_price'])} تومان"
     )
 
     sell_average = (
-        f"{format_toman(route['sell_price'])}"
+        f"{format_toman(route['sell_price'])} تومان"
     )
 
     return (
-        "┌──────────────────────────────┬──────────────────────────────┐\n"
-        "│ 📥 جزئیات خرید              │ 📤 جزئیات فروش              │\n"
-        "├──────────────────────────────┼──────────────────────────────┤\n"
-        f"│ صرافی: {buy_exchange:<19} │ صرافی: {sell_exchange:<19} │\n"
-        f"│ مبلغ: {buy_amount:<20} │ مقدار: {sell_amount:<18} │\n"
-        f"│ تعداد لول: {buy_levels:<16} │ تعداد لول: {sell_levels:<16} │\n"
-        f"│ میانگین: {buy_average:<19} │ میانگین: {sell_average:<19} │\n"
-        "└──────────────────────────────┴──────────────────────────────┘"
+        "📋 جزئیات خرید و فروش:\n\n"
+
+        "📥 خرید\n"
+        f"صرافی: {buy_exchange}\n"
+        f"مبلغ: {buy_amount}\n"
+        f"تعداد لول: {buy_levels}\n"
+        f"میانگین: {buy_average}\n\n"
+
+        "📤 فروش\n"
+        f"صرافی: {sell_exchange}\n"
+        f"مبلغ: {sell_amount}\n"
+        f"تعداد لول: {sell_levels}\n"
+        f"میانگین: {sell_average}"
     )
 
 
@@ -2980,13 +3084,13 @@ def build_current_status_message(
 
             "",
 
-            f"سود خالص: "
-            f"{get_profit_indicator(best['net_profit'])} "
-            f"{format_toman_signed(best['net_profit'])} تومان",
+            format_profit_line(
+                best["net_profit"]
+            ),
 
-            f"درصد سود: "
-            f"{get_profit_indicator(best['profit_percent'])} "
-            f"{format_percent(best['profit_percent'])}",
+            format_profit_percent_line(
+                best["profit_percent"]
+            ),
 
             format_orderbook_execution(best),
 
@@ -3029,38 +3133,39 @@ def build_current_status_message(
             f"{history['qualified_observations']}",
 
             f"• میانگین سود: "
-            f"{format_percent(history['average_profit_percent'])}",
+            f"{format_profit_percent_line(history['average_profit_percent'])}",
 
             "",
 
             "🏆 سه مسیر برتر فعلی:",
         ])
 
+        # ====================================================
+        # سه مسیر برتر
+        # ====================================================
+
         for index, route in enumerate(
             latest_routes[:3],
             start=1
         ):
 
-            profit_text = format_percent(
-                route["profit_percent"]
-            )
+            lines.extend([
 
-            net_text = format_toman_signed(
-                route["net_profit"]
-            )
+                "",
 
-            indicator = get_profit_indicator(
-                route["net_profit"]
-            )
-
-            lines.append(
                 f"{index}. "
-                f"{indicator} "
                 f"{route['buy_exchange']} → "
-                f"{route['sell_exchange']} | "
-                f"{profit_text} | "
-                f"{net_text} تومان"
-            )
+                f"{route['sell_exchange']}",
+
+                format_profit_line(
+                    route["net_profit"]
+                ),
+
+                format_profit_percent_line(
+                    route["profit_percent"]
+                ),
+
+            ])
 
     else:
 
@@ -3126,8 +3231,15 @@ def build_current_status_message(
 
                 f"{exchange}:",
 
-                f"قیمت خرید: {format_toman(bid)}    "
-                f"قیمت فروش: {format_toman(ask)}",
+                (
+                    f"قیمت خرید (Ask): "
+                    f"{format_toman(ask)}"
+                ),
+
+                (
+                    f"قیمت فروش (Bid): "
+                    f"{format_toman(bid)}"
+                ),
 
             ])
 
@@ -3471,15 +3583,16 @@ def main():
                 )
 
                 print(
-                    f"سود خالص: "
-                    f"{get_profit_indicator(best['net_profit'])} "
-                    f"{format_toman_signed(best['net_profit'])} تومان"
+                    format_profit_line(
+                        best["net_profit"]
+                    )
                 )
 
                 print(
-                    f"درصد سود: "
-                    f"{get_profit_indicator(best['profit_percent'])} "
-                    f"{format_percent(best['profit_percent'])}"
+                    format_profit_percent_line(
+                        best["profit_percent"]
+                    )
+
                 )
 
                 print(
@@ -3492,10 +3605,6 @@ def main():
                 )
 
                 print()
-
-                print(
-                    "📊 جزئیات خرید و فروش:"
-                )
 
                 print(
                     build_trade_details_table(
