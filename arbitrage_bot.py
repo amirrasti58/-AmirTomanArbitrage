@@ -2339,4 +2339,405 @@ def build_current_status_message(
             lines.append(
                 f"• {exchange}: ✅ "
                 f"Ask {format_toman(ask)} | "
-                f"Bid {
+                f"Bid {format_toman(bid)}"
+            )
+
+        else:
+
+            lines.append(
+                f"• {exchange}: "
+                f"❌ Order Book نامعتبر"
+            )
+
+    lines.extend([
+        "",
+        "📅 آمار امروز:",
+        f"• بررسی مسیر: "
+        f"{daily['route_checks']}",
+        f"• فرصت سودده: "
+        f"{daily['positive']}",
+        f"• فرصت واجد شرایط: "
+        f"{daily['qualified']}",
+        f"• هشدار ارسال‌شده: "
+        f"{daily['alerts']}",
+        f"• سود محاسبه‌شده: "
+        f"{format_toman_signed(daily['simulated_profit_toman'])} تومان",
+        "",
+        f"🕐 زمان: "
+        f"{now.strftime('%Y-%m-%d %H:%M:%S')} تهران",
+    ])
+
+    return "\n".join(lines)
+
+
+def send_current_status_message(
+    stats=None
+):
+    if stats is None:
+        stats = load_stats()
+
+    return send_telegram(
+        build_current_status_message(
+            stats
+        ),
+        {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "💰 تغییر موجودی",
+                        "callback_data":
+                            "MENU:CAPITAL",
+                    },
+                ],
+                [
+                    {
+                        "text": "↩️ برگشت",
+                        "callback_data":
+                            "MENU:MAIN",
+                    },
+                ],
+            ]
+        }
+    )
+
+
+def send_periodic_report(
+    stats
+):
+    global last_report_minute
+
+    now = now_tehran()
+
+    hour = now.hour
+
+    current_time = now.strftime(
+        "%H:%M"
+    )
+
+    # 23:00 تا 07:59: هیچ گزارش دوره‌ای
+    if hour >= 23 or hour < 8:
+        return
+
+    if current_time not in REPORT_TIMES:
+        return
+
+    if (
+        last_report_minute
+        == current_time
+    ):
+        return
+
+    last_report_minute = (
+        current_time
+    )
+
+    send_current_status_message(
+        stats
+    )
+
+
+# ============================================================
+# پیام شروع
+# ============================================================
+
+def send_startup_message():
+
+    message = (
+        "🤖 ربات آربیتراژ شروع شد\n\n"
+        "📡 فقط مانیتورینگ و شبیه‌سازی\n"
+        "❌ معامله واقعی انجام نمی‌شود.\n\n"
+        "🏦 صرافی‌ها:\n"
+        "• Wallex\n"
+        "• BitPin\n"
+        "• Ramzinex\n\n"
+        f"📈 حداقل سود هشدار: "
+        f"{format_percent(MIN_PROFIT_PERCENT)}\n"
+        f"⏱️ فاصله بررسی: "
+        f"{CHECK_INTERVAL_SECONDS} ثانیه\n"
+        f"💳 نوع کارمزد: "
+        f"{ORDER_TYPE}\n\n"
+        "💰 هنوز موجودی انتخاب نشده است.\n"
+        "از دکمه زیر مبلغ را انتخاب کنید.\n\n"
+        "📊 گزارش وضعیت: هر دو ساعت\n"
+        "🌙 گزارش دوره‌ای: 23:00 تا 08:00 متوقف\n"
+        "⏰ چرخه گزارش از 18:00 محاسبه می‌شود."
+    )
+
+    send_telegram(
+        message,
+        capital_keyboard()
+    )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    global latest_orderbooks
+    global latest_routes
+
+    print()
+    print(
+        "================================================"
+    )
+
+    print(
+        "🤖 ربات آربیتراژ شروع شد"
+    )
+
+    print(
+        "================================================"
+    )
+
+    print(
+        "💰 موجودی: "
+        "از داخل Telegram انتخاب می‌شود"
+    )
+
+    print(
+        f"📈 حداقل سود هشدار: "
+        f"{format_percent(MIN_PROFIT_PERCENT)}"
+    )
+
+    print(
+        f"⏱️ فاصله بررسی: "
+        f"{CHECK_INTERVAL_SECONDS} ثانیه"
+    )
+
+    print(
+        f"💳 نوع کارمزد: "
+        f"{ORDER_TYPE}"
+    )
+
+    print(
+        "🏦 صرافی‌ها: "
+        + ", ".join(
+            ENABLED_EXCHANGES
+        )
+    )
+
+    print(
+        "================================================"
+    )
+
+    stats = load_stats()
+
+    send_startup_message()
+
+    start_telegram_listener()
+
+    while True:
+
+        if (
+            time.time()
+            - runtime_start
+            >= MAX_RUNTIME_SECONDS
+        ):
+
+            print()
+            print(
+                "⏹️ حداکثر زمان اجرا به پایان رسید."
+            )
+
+            print(
+                "ربات به شکل امن متوقف شد."
+            )
+
+            save_stats(stats)
+
+            break
+
+        cycle_start = time.time()
+
+        print()
+        print(
+            "------------------------------------------------"
+        )
+
+        print(
+            "🕐 زمان: "
+            f"{now_tehran().strftime('%Y-%m-%d %H:%M:%S')} تهران"
+        )
+
+        print(
+            "🔎 در حال دریافت Order Book..."
+        )
+
+        orderbooks = get_all_orderbooks()
+
+        latest_orderbooks = (
+            orderbooks
+        )
+
+        print(
+            f"📚 Order Book معتبر: "
+            f"{len(orderbooks)}/"
+            f"{len(ENABLED_EXCHANGES)}"
+        )
+
+        if orderbooks:
+
+            print_market_snapshot(
+                orderbooks
+            )
+
+            if selected_capital_toman is None:
+
+                routes = []
+
+                latest_routes = []
+
+                print(
+                    "⚠️ موجودی انتخاب نشده؛ "
+                    "محاسبه سود انجام نمی‌شود."
+                )
+
+            else:
+
+                routes = calculate_all_routes(
+                    orderbooks,
+                    selected_capital_toman
+                )
+
+                latest_routes = routes
+
+            update_opportunity_history(
+                routes
+            )
+
+            print_routes(
+                routes
+            )
+
+            if routes:
+
+                best = routes[0]
+
+                print()
+                print(
+                    "⭐ بهترین مسیر فعلی:"
+                )
+
+                print(
+                    f"{best['buy_exchange']} → "
+                    f"{best['sell_exchange']}"
+                )
+
+                print(
+                    f"💰 موجودی انتخاب‌شده: "
+                    f"{format_toman(selected_capital_toman)} تومان"
+                )
+
+                print(
+                    f"💵 سود خالص: "
+                    f"{format_toman_signed(best['net_profit'])} تومان"
+                )
+
+                print(
+                    f"📈 درصد سود: "
+                    f"{format_percent(best['profit_percent'])}"
+                )
+
+                print(
+                    f"🎯 حد هشدار: "
+                    f"{format_percent(MIN_PROFIT_PERCENT)}"
+                )
+
+                print(
+                    f"📦 قابلیت اجرای Order Book: "
+                    f"{best['execution_ratio'] * 100:.1f}%"
+                )
+
+                if (
+                    best["net_profit"] > 0
+                    and best["profit_percent"]
+                    >= MIN_PROFIT_PERCENT
+                    and best["execution_ratio"]
+                    >= MIN_EXECUTION_RATIO
+                ):
+
+                    print(
+                        "🚨 فرصت واجد شرایط هشدار است."
+                    )
+
+                    if send_arbitrage_alert(
+                        best,
+                        stats
+                    ):
+
+                        print(
+                            "📨 هشدار Telegram ارسال شد."
+                        )
+
+                else:
+
+                    print(
+                        "ℹ️ فعلاً فرصت واجد شرایط "
+                        "برای هشدار وجود ندارد."
+                    )
+
+            print_capital_allocation(
+                routes
+            )
+
+            update_stats(
+                stats,
+                routes
+            )
+
+        else:
+
+            latest_routes = []
+
+            print(
+                "❌ هیچ Order Book معتبری دریافت نشد."
+            )
+
+        # گزارش‌های دوره‌ای طبق برنامه
+        send_periodic_report(
+            stats
+        )
+
+        elapsed = (
+            time.time()
+            - cycle_start
+        )
+
+        sleep_time = max(
+            0,
+            CHECK_INTERVAL_SECONDS
+            - elapsed
+        )
+
+        time.sleep(
+            sleep_time
+        )
+
+
+# ============================================================
+# اجرا
+# ============================================================
+
+if __name__ == "__main__":
+
+    try:
+
+        main()
+
+    except KeyboardInterrupt:
+
+        print()
+        print(
+            "⏹️ ربات به صورت دستی متوقف شد."
+        )
+
+    except Exception as e:
+
+        print()
+        print(
+            f"❌ خطای جدی: {e}"
+        )
+
+        raise
