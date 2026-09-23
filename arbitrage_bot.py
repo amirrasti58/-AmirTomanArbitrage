@@ -9,18 +9,24 @@ USDT / TOMAN
 - دریافت Order Book
 - Ask برای خرید / Bid برای فروش
 - عمق Order Book
+- نمایش تعداد Levelهای استفاده‌شده
 - کارمزد Maker / Taker
 - محاسبه سود خالص
 - انتخاب موجودی از داخل Telegram
 - موجودی پیش‌فرض ۵۰ میلیون تومان
+- انتخاب حد هشدار سود از داخل Telegram
 - گزارش وضعیت هر دو ساعت
 - عدم ارسال گزارش دوره‌ای از 23:00 تا 08:00
 - چرخه گزارش:
   18:00 / 20:00 / 22:00
   سپس روز بعد 08:00 / 10:00 / ...
 - هشدار فرصت واقعی در صورت عبور از حد سود
+- نمایش وضعیت سود با نشانگر سبز / زرد / قرمز
 - آمار روزانه / هفتگی / کل
 - پیشنهاد تخصیص سرمایه فقط پس از داده کافی
+
+MONITORING ONLY
+NO REAL TRADES
 ============================================================
 """
 
@@ -41,6 +47,7 @@ import requests
 REQUEST_TIMEOUT = 15
 ORDERBOOK_LEVELS = 20
 
+# حد هشدار اولیه از Environment
 MIN_PROFIT_PERCENT = float(
     os.environ.get("MIN_SPREAD_PERCENT", "1.5")
 )
@@ -63,6 +70,19 @@ ORDER_TYPE = os.environ.get(
 
 if ORDER_TYPE not in ("maker", "taker"):
     ORDER_TYPE = "taker"
+
+
+# ============================================================
+# گزینه‌های حد هشدار
+# ============================================================
+
+PROFIT_THRESHOLD_OPTIONS = [
+    (0.5, "۰.۵٪"),
+    (1.0, "۱٪"),
+    (1.5, "۱.۵٪"),
+    (2.0, "۲٪"),
+    (3.0, "۳٪"),
+]
 
 
 # ============================================================
@@ -158,12 +178,12 @@ exchange_error_state = {}
 # ============================================================
 # موجودی پیش‌فرض
 # ============================================================
-# ربات از ابتدا ۵۰ میلیون تومان را مبنا قرار می‌دهد.
-# کاربر هر زمان بخواهد می‌تواند آن را از Telegram تغییر دهد.
 
 selected_capital_toman = 50_000_000
 
 waiting_for_custom_capital = False
+waiting_for_custom_threshold = False
+
 telegram_update_offset = None
 
 # آخرین وضعیت برای گزارش Telegram
@@ -243,11 +263,72 @@ def normalize_digits(text):
     )
 
 
+def profit_status_emoji(
+    profit,
+    threshold=None,
+    execution_ratio=None
+):
+    """
+    وضعیت سود:
+
+    🟢 سود مثبت + عبور از حد هشدار + اجرای مناسب
+    🟡 سود مثبت ولی هنوز زیر حد هشدار
+    🔴 سود منفی یا صفر
+    """
+
+    if threshold is None:
+        threshold = MIN_PROFIT_PERCENT
+
+    if execution_ratio is None:
+        execution_ratio = 1.0
+
+    if (
+        profit > 0
+        and profit >= threshold
+        and execution_ratio >= MIN_EXECUTION_RATIO
+    ):
+        return "🟢"
+
+    if profit > 0:
+        return "🟡"
+
+    return "🔴"
+
+
+def profit_percent_status_emoji(
+    profit_percent,
+    threshold=None,
+    execution_ratio=None
+):
+    """
+    وضعیت درصد سود.
+    """
+
+    if threshold is None:
+        threshold = MIN_PROFIT_PERCENT
+
+    if execution_ratio is None:
+        execution_ratio = 1.0
+
+    if (
+        profit_percent > 0
+        and profit_percent >= threshold
+        and execution_ratio >= MIN_EXECUTION_RATIO
+    ):
+        return "🟢"
+
+    if profit_percent > 0:
+        return "🟡"
+
+    return "🔴"
+
+
 # ============================================================
 # Order Book
 # ============================================================
 
 def normalize_orderbook(data):
+
     result = []
 
     if not isinstance(data, list):
@@ -300,6 +381,7 @@ def report_exchange_error(
     exchange,
     message
 ):
+
     current = time.time()
 
     previous = exchange_error_state.get(
@@ -611,6 +693,8 @@ def calculate_buy(
     received_usdt = 0.0
     spent_toman = 0.0
 
+    levels_used = 0
+
     for price, volume in asks:
 
         if remaining_toman <= 0:
@@ -628,6 +712,8 @@ def calculate_buy(
         spent_toman += cost
         received_usdt += usdt
         remaining_toman -= cost
+
+        levels_used += 1
 
     if spent_toman <= 0:
         return None
@@ -651,6 +737,7 @@ def calculate_buy(
         "average_price": average_price,
         "unfilled_toman": remaining_toman,
         "execution_ratio": execution_ratio,
+        "levels_used": levels_used,
     }
 
 
@@ -668,6 +755,8 @@ def calculate_sell(
     received_toman = 0.0
     sold_usdt = 0.0
 
+    levels_used = 0
+
     for price, volume in bids:
 
         if remaining_usdt <= 0:
@@ -684,6 +773,8 @@ def calculate_sell(
 
         sold_usdt += amount
         remaining_usdt -= amount
+
+        levels_used += 1
 
     if sold_usdt <= 0:
         return None
@@ -707,6 +798,7 @@ def calculate_sell(
         "average_price": average_price,
         "unfilled_usdt": remaining_usdt,
         "execution_ratio": execution_ratio,
+        "levels_used": levels_used,
     }
 
 
@@ -787,26 +879,44 @@ def calculate_route(
     return {
         "buy_exchange": buy_exchange,
         "sell_exchange": sell_exchange,
+
         "buy_price": buy_result[
             "average_price"
         ],
+
         "sell_price": sell_result[
             "average_price"
         ],
+
+        "buy_levels_used": buy_result[
+            "levels_used"
+        ],
+
+        "sell_levels_used": sell_result[
+            "levels_used"
+        ],
+
         "usdt": buy_result["usdt"],
         "spent": actual_spent,
         "received": final_toman,
+
         "net_profit": net_profit,
+
         "profit_percent": profit_percent,
+
         "buy_fee": buy_fee,
         "sell_fee": sell_fee,
+
         "buy_unfilled_toman": (
             buy_result["unfilled_toman"]
         ),
+
         "sell_unfilled_usdt": (
             sell_result["unfilled_usdt"]
         ),
+
         "execution_ratio": execution_ratio,
+
         "fully_executable": (
             execution_ratio
             >= MIN_EXECUTION_RATIO
@@ -980,13 +1090,25 @@ def print_routes(routes):
             else "ناقص"
         )
 
+        profit_emoji = profit_status_emoji(
+            route["net_profit"],
+            MIN_PROFIT_PERCENT,
+            route["execution_ratio"]
+        )
+
+        percent_emoji = profit_percent_status_emoji(
+            route["profit_percent"],
+            MIN_PROFIT_PERCENT,
+            route["execution_ratio"]
+        )
+
         print(
             f"{index}. "
             f"{route['buy_exchange']} → "
             f"{route['sell_exchange']} | "
-            f"سود "
+            f"سود {percent_emoji}"
             f"{format_percent(route['profit_percent'])} | "
-            f"خالص "
+            f"خالص {profit_emoji}"
             f"{format_toman_signed(route['net_profit'])} تومان | "
             f"اجرا "
             f"{route['execution_ratio'] * 100:.1f}% "
@@ -1023,16 +1145,21 @@ def update_opportunity_history(
 
         snapshot[key] = {
             "time": now,
+
             "profit_percent": (
                 route["profit_percent"]
             ),
+
             "net_profit": (
                 route["net_profit"]
             ),
+
             "spent": route["spent"],
+
             "execution_ratio": (
                 route["execution_ratio"]
             ),
+
             "qualified": (
                 route["net_profit"] > 0
                 and route["profit_percent"]
@@ -1686,6 +1813,14 @@ def capital_keyboard():
 
             [
                 {
+                    "text": "🎯 تغییر حد هشدار",
+                    "callback_data":
+                        "MENU:THRESHOLD"
+                },
+            ],
+
+            [
+                {
                     "text": "📊 وضعیت",
                     "callback_data":
                         "MENU:STATUS"
@@ -1700,6 +1835,72 @@ def capital_keyboard():
                 },
             ],
         ]
+    }
+
+
+# ============================================================
+# کیبورد حد هشدار
+# ============================================================
+
+def threshold_keyboard():
+
+    rows = []
+
+    current_row = []
+
+    for value, label in PROFIT_THRESHOLD_OPTIONS:
+
+        current_row.append({
+            "text": (
+                f"✅ {label}"
+                if abs(
+                    MIN_PROFIT_PERCENT - value
+                ) < 0.0001
+                else label
+            ),
+            "callback_data":
+                f"THRESHOLD:{value}",
+        })
+
+        if len(current_row) == 2:
+
+            rows.append(
+                current_row
+            )
+
+            current_row = []
+
+    if current_row:
+        rows.append(
+            current_row
+        )
+
+    rows.append([
+        {
+            "text": "✏️ حد دلخواه",
+            "callback_data":
+                "THRESHOLD:CUSTOM",
+        }
+    ])
+
+    rows.append([
+        {
+            "text": "📊 وضعیت",
+            "callback_data":
+                "MENU:STATUS",
+        }
+    ])
+
+    rows.append([
+        {
+            "text": "↩️ برگشت",
+            "callback_data":
+                "MENU:MAIN",
+        }
+    ])
+
+    return {
+        "inline_keyboard": rows
     }
 
 
@@ -1725,6 +1926,14 @@ def main_menu_keyboard():
                     "text": "💰 انتخاب موجودی",
                     "callback_data":
                         "MENU:CAPITAL"
+                },
+            ],
+
+            [
+                {
+                    "text": "🎯 انتخاب حد هشدار سود",
+                    "callback_data":
+                        "MENU:THRESHOLD"
                 },
             ],
         ]
@@ -1758,6 +1967,54 @@ def selected_capital_keyboard():
 
             [
                 {
+                    "text": "🎯 تغییر حد هشدار",
+                    "callback_data":
+                        "MENU:THRESHOLD"
+                },
+            ],
+
+            [
+                {
+                    "text": "↩️ برگشت",
+                    "callback_data":
+                        "MENU:MAIN"
+                },
+            ],
+        ]
+    }
+
+
+def selected_threshold_keyboard():
+
+    return {
+        "inline_keyboard": [
+
+            [
+                {
+                    "text": "🎯 تغییر حد هشدار",
+                    "callback_data":
+                        "MENU:THRESHOLD"
+                },
+            ],
+
+            [
+                {
+                    "text": "💰 تغییر موجودی",
+                    "callback_data":
+                        "MENU:CAPITAL"
+                },
+            ],
+
+            [
+                {
+                    "text": "📊 وضعیت",
+                    "callback_data":
+                        "MENU:STATUS"
+                },
+            ],
+
+            [
+                {
                     "text": "↩️ برگشت",
                     "callback_data":
                         "MENU:MAIN"
@@ -1772,7 +2029,9 @@ def send_main_menu():
     return send_telegram(
         "📋 منوی اصلی\n\n"
         f"💰 موجودی فعلی: "
-        f"{format_toman(selected_capital_toman)} تومان",
+        f"{format_toman(selected_capital_toman)} تومان\n"
+        f"🎯 حد هشدار سود: "
+        f"{MIN_PROFIT_PERCENT:.1f}%",
         main_menu_keyboard()
     )
 
@@ -1784,8 +2043,22 @@ def send_capital_menu():
         "مبلغ کل سرمایه‌ای که می‌خواهید ربات بر اساس آن "
         "محاسبات Order Book و سود را انجام دهد انتخاب کنید.\n\n"
         f"💰 موجودی فعلی: "
-        f"{format_toman(selected_capital_toman)} تومان",
+        f"{format_toman(selected_capital_toman)} تومان\n\n"
+        f"🎯 حد هشدار فعلی: "
+        f"{MIN_PROFIT_PERCENT:.1f}%",
         capital_keyboard()
+    )
+
+
+def send_threshold_menu():
+
+    return send_telegram(
+        "🎯 انتخاب حد هشدار سود\n\n"
+        "هر زمان سود خالص و درصد سود به این حد برسد "
+        "و اجرای Order Book مناسب باشد، فرصت واجد شرایط هشدار خواهد شد.\n\n"
+        f"🎯 حد هشدار فعلی: "
+        f"{MIN_PROFIT_PERCENT:.1f}%",
+        threshold_keyboard()
     )
 
 
@@ -1850,6 +2123,36 @@ def set_selected_capital(
     return True
 
 
+def set_profit_threshold(
+    value
+):
+
+    global MIN_PROFIT_PERCENT
+
+    try:
+
+        value = float(value)
+
+    except Exception:
+
+        return False
+
+    if value <= 0:
+        return False
+
+    if value > 100:
+        return False
+
+    MIN_PROFIT_PERCENT = value
+
+    print(
+        f"🎯 حد هشدار سود تغییر کرد: "
+        f"{MIN_PROFIT_PERCENT:.1f}%"
+    )
+
+    return True
+
+
 # ============================================================
 # مدیریت پیام Telegram
 # ============================================================
@@ -1859,6 +2162,7 @@ def handle_telegram_update(
 ):
 
     global waiting_for_custom_capital
+    global waiting_for_custom_threshold
 
     callback = update.get(
         "callback_query"
@@ -1882,9 +2186,8 @@ def handle_telegram_update(
 
         if data == "MENU:MAIN":
 
-            waiting_for_custom_capital = (
-                False
-            )
+            waiting_for_custom_capital = False
+            waiting_for_custom_threshold = False
 
             answer_callback_query(
                 callback_id,
@@ -1901,9 +2204,8 @@ def handle_telegram_update(
 
         if data == "MENU:CAPITAL":
 
-            waiting_for_custom_capital = (
-                False
-            )
+            waiting_for_custom_capital = False
+            waiting_for_custom_threshold = False
 
             answer_callback_query(
                 callback_id,
@@ -1911,6 +2213,24 @@ def handle_telegram_update(
             )
 
             send_capital_menu()
+
+            return
+
+        # ----------------------------------------------------
+        # انتخاب حد هشدار
+        # ----------------------------------------------------
+
+        if data == "MENU:THRESHOLD":
+
+            waiting_for_custom_capital = False
+            waiting_for_custom_threshold = False
+
+            answer_callback_query(
+                callback_id,
+                "انتخاب حد هشدار"
+            )
+
+            send_threshold_menu()
 
             return
 
@@ -1945,9 +2265,8 @@ def handle_telegram_update(
             # مبلغ دلخواه
             if value == "CUSTOM":
 
-                waiting_for_custom_capital = (
-                    True
-                )
+                waiting_for_custom_capital = True
+                waiting_for_custom_threshold = False
 
                 answer_callback_query(
                     callback_id,
@@ -1975,9 +2294,8 @@ def handle_telegram_update(
                 amount
             ):
 
-                waiting_for_custom_capital = (
-                    False
-                )
+                waiting_for_custom_capital = False
+                waiting_for_custom_threshold = False
 
                 answer_callback_query(
                     callback_id,
@@ -1996,6 +2314,79 @@ def handle_telegram_update(
                 answer_callback_query(
                     callback_id,
                     "مبلغ نامعتبر است."
+                )
+
+            return
+
+        # ----------------------------------------------------
+        # انتخاب حد هشدار
+        # ----------------------------------------------------
+
+        if data.startswith(
+            "THRESHOLD:"
+        ):
+
+            value = data.split(
+                ":",
+                1
+            )[1]
+
+            # حد دلخواه
+            if value == "CUSTOM":
+
+                waiting_for_custom_threshold = True
+                waiting_for_custom_capital = False
+
+                answer_callback_query(
+                    callback_id,
+                    "حد هشدار دلخواه را ارسال کنید."
+                )
+
+                send_telegram(
+                    "✏️ حد هشدار دلخواه را به درصد ارسال کنید.\n\n"
+                    "مثال:\n"
+                    "1.8\n\n"
+                    "یا:\n"
+                    "۲.۵"
+                )
+
+                return
+
+            try:
+
+                threshold = float(
+                    value
+                )
+
+            except Exception:
+
+                threshold = 0
+
+            if set_profit_threshold(
+                threshold
+            ):
+
+                waiting_for_custom_threshold = False
+                waiting_for_custom_capital = False
+
+                answer_callback_query(
+                    callback_id,
+                    "حد هشدار تغییر کرد."
+                )
+
+                send_telegram(
+                    "✅ حد هشدار سود تغییر کرد.\n\n"
+                    f"🎯 حد هشدار جدید: "
+                    f"{MIN_PROFIT_PERCENT:.1f}%\n\n"
+                    "از این مقدار در محاسبات و هشدارها استفاده می‌شود.",
+                    selected_threshold_keyboard()
+                )
+
+            else:
+
+                answer_callback_query(
+                    callback_id,
+                    "حد هشدار نامعتبر است."
                 )
 
             return
@@ -2042,9 +2433,8 @@ def handle_telegram_update(
         "/start",
     ):
 
-        waiting_for_custom_capital = (
-            False
-        )
+        waiting_for_custom_capital = False
+        waiting_for_custom_threshold = False
 
         send_main_menu()
 
@@ -2060,11 +2450,27 @@ def handle_telegram_update(
         "انتخاب موجودی"
     ):
 
-        waiting_for_custom_capital = (
-            False
-        )
+        waiting_for_custom_capital = False
+        waiting_for_custom_threshold = False
 
         send_capital_menu()
+
+        return
+
+    # --------------------------------------------------------
+    # انتخاب حد هشدار
+    # --------------------------------------------------------
+
+    if text in (
+        "/threshold",
+        "حد هشدار",
+        "انتخاب حد هشدار"
+    ):
+
+        waiting_for_custom_capital = False
+        waiting_for_custom_threshold = False
+
+        send_threshold_menu()
 
         return
 
@@ -2122,15 +2528,71 @@ def handle_telegram_update(
             amount
         )
 
-        waiting_for_custom_capital = (
-            False
-        )
+        waiting_for_custom_capital = False
 
         send_telegram(
             "✅ موجودی با موفقیت ثبت شد.\n\n"
             f"💰 {format_toman(amount)} تومان\n\n"
             "از این مبلغ در محاسبات ربات استفاده می‌شود.",
             selected_capital_keyboard()
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # حد هشدار دلخواه
+    # --------------------------------------------------------
+
+    if waiting_for_custom_threshold:
+
+        normalized = normalize_digits(
+            text
+        )
+
+        normalized = (
+            normalized
+            .replace(",", ".")
+            .replace("٫", ".")
+            .replace("٬", "")
+            .replace(" ", "")
+        )
+
+        try:
+
+            threshold = float(
+                normalized
+            )
+
+        except Exception:
+
+            threshold = 0
+
+        if (
+            threshold <= 0
+            or threshold > 100
+        ):
+
+            send_telegram(
+                "❌ حد هشدار نامعتبر است.\n\n"
+                "لطفاً درصدی بین ۰.۱ تا ۱۰۰ وارد کنید.\n\n"
+                "مثال:\n"
+                "1.8"
+            )
+
+            return
+
+        set_profit_threshold(
+            threshold
+        )
+
+        waiting_for_custom_threshold = False
+
+        send_telegram(
+            "✅ حد هشدار با موفقیت ثبت شد.\n\n"
+            f"🎯 حد هشدار جدید: "
+            f"{MIN_PROFIT_PERCENT:.1f}%\n\n"
+            "از این مقدار برای تشخیص فرصت و ارسال هشدار استفاده می‌شود.",
+            selected_threshold_keyboard()
         )
 
 
@@ -2293,38 +2755,81 @@ def send_arbitrage_alert(
         history_key
     )
 
+    profit_emoji = profit_status_emoji(
+        route["net_profit"],
+        MIN_PROFIT_PERCENT,
+        route["execution_ratio"]
+    )
+
+    percent_emoji = profit_percent_status_emoji(
+        route["profit_percent"],
+        MIN_PROFIT_PERCENT,
+        route["execution_ratio"]
+    )
+
     message = (
         "🚨 فرصت آربیتراژ\n\n"
+
         f"خرید از: "
         f"{route['buy_exchange']}\n"
+
         f"فروش در: "
         f"{route['sell_exchange']}\n\n"
+
         f"💰 موجودی انتخاب‌شده: "
         f"{format_toman(selected_capital_toman)} تومان\n"
+
         f"سرمایه استفاده‌شده: "
         f"{format_toman(route['spent'])} تومان\n"
+
         f"مقدار USDT: "
         f"{route['usdt']:.1f}\n\n"
-        f"قیمت میانگین خرید: "
-        f"{format_toman(route['buy_price'])} تومان\n"
-        f"قیمت میانگین فروش: "
-        f"{format_toman(route['sell_price'])} تومان\n\n"
-        f"💵 سود خالص: "
+
+        f"💲 قیمت‌های میانگین:\n"
+
+        f"• خرید: "
+        f"{format_toman(route['buy_price'])} تومان "
+        f"({route['buy_levels_used']} لول)\n"
+
+        f"• فروش: "
+        f"{format_toman(route['sell_price'])} تومان "
+        f"({route['sell_levels_used']} لول)\n\n"
+
+        f"{profit_emoji} سود خالص: "
         f"{format_toman_signed(route['net_profit'])} تومان\n"
-        f"📈 سود: "
+
+        f"{percent_emoji} درصد سود: "
         f"{format_percent(route['profit_percent'])}\n"
+
+        f"🎯 حد هشدار: "
+        f"{MIN_PROFIT_PERCENT:.1f}%\n\n"
+
         f"📦 اجرای Order Book: "
-        f"{route['execution_ratio'] * 100:.1f}%\n\n"
+        f"{route['execution_ratio'] * 100:.1f}%\n"
+
+        f"📚 لول خرید: "
+        f"{route['buy_levels_used']}\n"
+
+        f"📚 لول فروش: "
+        f"{route['sell_levels_used']}\n\n"
+
         f"کارمزد خرید: "
         f"{route['buy_fee'] * 100:.1f}%\n"
+
         f"کارمزد فروش: "
         f"{route['sell_fee'] * 100:.1f}%\n\n"
+
         f"مشاهده مسیر: "
         f"{history['observations']}\n"
+
         f"مشاهده سودده: "
         f"{history['positive_observations']}\n"
+
         f"رسیدن به حد سود: "
         f"{history['qualified_observations']}\n\n"
+
+        "⚠️ این پیام فقط برای مانیتورینگ است؛ "
+        "هیچ معامله‌ای توسط ربات انجام نمی‌شود."
     )
 
     if send_telegram(message):
@@ -2372,23 +2877,6 @@ def send_arbitrage_alert(
 # گزارش وضعیت Telegram
 # ============================================================
 
-# چرخه:
-#
-# 18:00
-# 20:00
-# 22:00
-#
-# سپس در روز بعد:
-#
-# 08:00
-# 10:00
-# 12:00
-# 14:00
-# 16:00
-# 18:00
-#
-# بازه 23:00 تا 08:00 بدون گزارش است.
-#
 REPORT_TIMES = {
     "08:00",
     "10:00",
@@ -2426,18 +2914,6 @@ def build_current_status_message(
         empty.copy()
     )
 
-    # ========================================================
-    # ترتیب گزارش:
-    #
-    # 1. وضعیت
-    # 2. موجودی
-    # 3. بهترین مسیر
-    # 4. جزئیات
-    # 5. صرافی‌ها
-    # 6. آمار
-    # 7. زمان
-    # ========================================================
-
     lines = [
 
         "📊 وضعیت فعلی آربیتراژ",
@@ -2450,6 +2926,14 @@ def build_current_status_message(
             if selected_capital_toman is not None
             else "❌ هنوز انتخاب نشده"
         ),
+
+        f"🎯 حد هشدار سود: "
+        f"{MIN_PROFIT_PERCENT:.1f}%",
+
+        "",
+
+        "🔎 وضعیت: MONITORING ONLY",
+        "🚫 معامله واقعی انجام نمی‌شود.",
     ]
 
     # ========================================================
@@ -2474,6 +2958,18 @@ def build_current_status_message(
             route_key
         )
 
+        profit_emoji = profit_status_emoji(
+            best["net_profit"],
+            MIN_PROFIT_PERCENT,
+            best["execution_ratio"]
+        )
+
+        percent_emoji = profit_percent_status_emoji(
+            best["profit_percent"],
+            MIN_PROFIT_PERCENT,
+            best["execution_ratio"]
+        )
+
         lines.extend([
 
             "",
@@ -2485,10 +2981,10 @@ def build_current_status_message(
 
             "",
 
-            f"💵 سود خالص: "
+            f"{profit_emoji} سود خالص: "
             f"{format_toman_signed(best['net_profit'])} تومان",
 
-            f"📈 درصد سود: "
+            f"{percent_emoji} درصد سود: "
             f"{format_percent(best['profit_percent'])}",
 
             f"🎯 حد هشدار: "
@@ -2511,10 +3007,12 @@ def build_current_status_message(
             "💲 قیمت‌های میانگین:",
 
             f"• خرید: "
-            f"{format_toman(best['buy_price'])} تومان",
+            f"{format_toman(best['buy_price'])} تومان "
+            f"| 📚 {best['buy_levels_used']} لول",
 
             f"• فروش: "
-            f"{format_toman(best['sell_price'])} تومان",
+            f"{format_toman(best['sell_price'])} تومان "
+            f"| 📚 {best['sell_levels_used']} لول",
 
             "",
 
@@ -2559,13 +3057,13 @@ def build_current_status_message(
         ):
 
             lines.append(
-                "🚨 وضعیت: فرصت واجد شرایط هشدار است."
+                "🟢 وضعیت: فرصت واجد شرایط هشدار است."
             )
 
         elif best["net_profit"] > 0:
 
             lines.append(
-                "ℹ️ وضعیت: سود مثبت است، "
+                "🟡 وضعیت: سود مثبت است، "
                 "اما هنوز به حد هشدار نرسیده."
             )
 
@@ -2592,11 +3090,29 @@ def build_current_status_message(
             start=1
         ):
 
+            route_profit_emoji = (
+                profit_status_emoji(
+                    route["net_profit"],
+                    MIN_PROFIT_PERCENT,
+                    route["execution_ratio"]
+                )
+            )
+
+            route_percent_emoji = (
+                profit_percent_status_emoji(
+                    route["profit_percent"],
+                    MIN_PROFIT_PERCENT,
+                    route["execution_ratio"]
+                )
+            )
+
             lines.append(
                 f"{index}. "
                 f"{route['buy_exchange']} → "
                 f"{route['sell_exchange']} | "
+                f"{route_percent_emoji}"
                 f"{format_percent(route['profit_percent'])} | "
+                f"{route_profit_emoji}"
                 f"{format_toman_signed(route['net_profit'])} تومان"
             )
 
@@ -2680,7 +3196,6 @@ def build_current_status_message(
 
         "",
 
-        # زمان عمداً در پایین‌ترین قسمت قرار گرفته
         f"🕐 زمان: "
         f"{now.strftime('%Y-%m-%d %H:%M:%S')} تهران",
     ])
@@ -2713,6 +3228,14 @@ def send_current_status_message(
                         "text": "💰 تغییر موجودی",
                         "callback_data":
                             "MENU:CAPITAL",
+                    },
+                ],
+
+                [
+                    {
+                        "text": "🎯 تغییر حد هشدار",
+                        "callback_data":
+                            "MENU:THRESHOLD",
                     },
                 ],
 
@@ -2786,7 +3309,7 @@ def send_startup_message():
         "• BitPin\n"
         "• Ramzinex\n\n"
 
-        f"📈 حداقل سود هشدار: "
+        f"📈 حد هشدار سود: "
         f"{format_percent(MIN_PROFIT_PERCENT)}\n"
 
         f"⏱️ فاصله بررسی: "
@@ -2803,7 +3326,10 @@ def send_startup_message():
         "🌙 گزارش دوره‌ای: "
         "23:00 تا 08:00 متوقف\n"
 
-        "⏰ چرخه گزارش از 18:00 محاسبه می‌شود."
+        "⏰ چرخه گزارش از 18:00 محاسبه می‌شود.\n\n"
+
+        "🚫 MONITORING ONLY\n"
+        "هیچ معامله واقعی انجام نمی‌شود."
     )
 
     send_telegram(
@@ -2836,12 +3362,16 @@ def main():
     )
 
     print(
+        "🚫 MONITORING ONLY - NO REAL TRADES"
+    )
+
+    print(
         f"💰 موجودی پیش‌فرض: "
         f"{format_toman(selected_capital_toman)} تومان"
     )
 
     print(
-        f"📈 حداقل سود هشدار: "
+        f"📈 حد هشدار سود: "
         f"{format_percent(MIN_PROFIT_PERCENT)}"
     )
 
@@ -2853,6 +3383,11 @@ def main():
     print(
         f"💳 نوع کارمزد: "
         f"{ORDER_TYPE}"
+    )
+
+    print(
+        f"📚 حداکثر Level Order Book: "
+        f"{ORDERBOOK_LEVELS}"
     )
 
     print(
@@ -2956,6 +3491,18 @@ def main():
 
                 best = routes[0]
 
+                profit_emoji = profit_status_emoji(
+                    best["net_profit"],
+                    MIN_PROFIT_PERCENT,
+                    best["execution_ratio"]
+                )
+
+                percent_emoji = profit_percent_status_emoji(
+                    best["profit_percent"],
+                    MIN_PROFIT_PERCENT,
+                    best["execution_ratio"]
+                )
+
                 print()
 
                 print(
@@ -2973,12 +3520,12 @@ def main():
                 )
 
                 print(
-                    f"💵 سود خالص: "
+                    f"{profit_emoji} سود خالص: "
                     f"{format_toman_signed(best['net_profit'])} تومان"
                 )
 
                 print(
-                    f"📈 درصد سود: "
+                    f"{percent_emoji} درصد سود: "
                     f"{format_percent(best['profit_percent'])}"
                 )
 
@@ -2992,6 +3539,26 @@ def main():
                     f"{best['execution_ratio'] * 100:.1f}%"
                 )
 
+                print(
+                    f"📚 لول خرید: "
+                    f"{best['buy_levels_used']}"
+                )
+
+                print(
+                    f"📚 لول فروش: "
+                    f"{best['sell_levels_used']}"
+                )
+
+                print(
+                    f"💲 میانگین خرید: "
+                    f"{format_toman(best['buy_price'])} تومان"
+                )
+
+                print(
+                    f"💲 میانگین فروش: "
+                    f"{format_toman(best['sell_price'])} تومان"
+                )
+
                 if (
                     best["net_profit"] > 0
                     and best["profit_percent"]
@@ -3001,7 +3568,7 @@ def main():
                 ):
 
                     print(
-                        "🚨 فرصت واجد شرایط هشدار است."
+                        "🟢 فرصت واجد شرایط هشدار است."
                     )
 
                     if send_arbitrage_alert(
@@ -3013,11 +3580,17 @@ def main():
                             "📨 هشدار Telegram ارسال شد."
                         )
 
+                elif best["net_profit"] > 0:
+
+                    print(
+                        "🟡 سود مثبت است اما هنوز "
+                        "به حد هشدار نرسیده."
+                    )
+
                 else:
 
                     print(
-                        "ℹ️ فعلاً فرصت واجد شرایط "
-                        "برای هشدار وجود ندارد."
+                        "🔴 فعلاً سود خالص منفی است."
                     )
 
             print_capital_allocation(
