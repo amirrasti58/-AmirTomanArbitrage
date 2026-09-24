@@ -22,7 +22,9 @@ USDT / TOMAN
 - آمار روزانه / هفتگی / کل
 - پیشنهاد تخصیص سرمایه فقط پس از داده کافی
 - نمایش سود و زیان با نشانگر وضعیت
-- نمایش جزئیات خرید و فروش به صورت مناسب موبایل
+- نمایش جزئیات خرید و فروش مناسب موبایل
+- تاریخچه فرصت‌های واجد شرایط
+- نمایش تاریخچه از داخل Telegram
 ============================================================
 """
 
@@ -30,7 +32,7 @@ import json
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import requests
@@ -47,7 +49,6 @@ MIN_PROFIT_PERCENT = float(
     os.environ.get("MIN_SPREAD_PERCENT", "1.0")
 )
 
-# حداقل سود خالص قابل‌اعتنا
 MIN_NET_PROFIT_TOMAN = 300_000
 
 CHECK_INTERVAL_SECONDS = int(
@@ -82,10 +83,16 @@ MAX_EXCHANGE_ALLOCATION_PERCENT = 0.70
 
 
 # ============================================================
-# فایل آمار
+# فایل‌های ذخیره‌سازی
 # ============================================================
 
 STATS_FILE = "arbitrage_stats.json"
+
+# تاریخچه دائمی فرصت‌های واجد شرایط
+HISTORY_FILE = "arbitrage_history.json"
+
+# حداکثر تعداد رکوردهای تاریخچه دائمی
+HISTORY_LIMIT = 1000
 
 
 # ============================================================
@@ -170,7 +177,11 @@ telegram_update_offset = None
 latest_orderbooks = {}
 latest_routes = []
 
+# تاریخچه تحلیلی داخل RAM
 opportunity_history = []
+
+# تاریخچه دائمی روی فایل
+persistent_history = []
 
 
 # ============================================================
@@ -190,35 +201,29 @@ def format_toman(value):
 
 def format_percent(value):
     """
-    نمایش درصد بدون علامت منفی.
-
     مثبت:
-    1.2%
+    1.20%
 
     منفی:
-    0.03%
-
-    علامت وضعیت توسط get_profit_indicator()
-    نمایش داده می‌شود.
+    0.03%-
     """
 
     if value is None:
         return "-"
 
-    return f"{abs(value):.2f}%"
+    if value < 0:
+        return f"{abs(value):.2f}%-"
+
+    return f"{value:.2f}%"
 
 
 def format_toman_signed(value):
     """
-    نمایش عدد سود/زیان بدون علامت منفی.
-
     مثبت:
     143,371
 
     منفی:
     143,371-
-
-    علامت منفی عمداً پشت عدد قرار می‌گیرد.
     """
 
     if value is None:
@@ -274,46 +279,28 @@ def get_profit_indicator(value):
 
 
 def get_profit_label(value):
-    """
-    عنوان مناسب برای سود یا زیان.
-
-    مثبت:
-    سود خالص
-
-    منفی:
-    زیان خالص
-
-    صفر:
-    سود خالص
-    """
 
     if value is not None and value < 0:
         return "زیان خالص"
 
-    return "سود خالص"
+    if value is not None and value > 0:
+        return "سود خالص"
+
+    return "نتیجه خالص"
 
 
 def get_profit_percent_label(value):
-    """
-    عنوان مناسب برای درصد سود یا زیان.
-    """
 
     if value is not None and value < 0:
         return "درصد زیان"
 
-    return "درصد سود"
+    if value is not None and value > 0:
+        return "درصد سود"
+
+    return "درصد نتیجه"
 
 
 def format_profit_line(value):
-    """
-    مثال مثبت:
-
-    🟢 سود خالص: 600,000 تومان
-
-    مثال منفی:
-
-    🔴 زیان خالص: 143,371- تومان
-    """
 
     indicator = get_profit_indicator(value)
     label = get_profit_label(value)
@@ -326,23 +313,11 @@ def format_profit_line(value):
 
 
 def format_profit_percent_line(value):
-    """
-    مثال مثبت:
-
-    🟢 درصد سود: 1.20%
-
-    مثال منفی:
-
-    🔴 درصد زیان: 0.03%-
-    """
 
     indicator = get_profit_indicator(value)
     label = get_profit_percent_label(value)
 
     percent = format_percent(value)
-
-    if value is not None and value < 0:
-        percent = f"{percent}-"
 
     return (
         f"{indicator} {label}: "
@@ -1189,36 +1164,14 @@ def print_routes(routes):
             else "ناقص"
         )
 
-        indicator = get_profit_indicator(
-            route["net_profit"]
-        )
-
-        profit_label = get_profit_label(
-            route["net_profit"]
-        )
-
-        percent_label = get_profit_percent_label(
-            route["profit_percent"]
-        )
-
-        percent_text = format_percent(
-            route["profit_percent"]
-        )
-
-        if route["profit_percent"] < 0:
-            percent_text = (
-                f"{percent_text}-"
-            )
-
         print(
             f"{index}. "
-            f"{indicator} "
             f"{route['buy_exchange']} → "
             f"{route['sell_exchange']} | "
-            f"{profit_label}: "
+            f"{get_profit_label(route['net_profit'])}: "
             f"{format_toman_signed(route['net_profit'])} تومان | "
-            f"{percent_label}: "
-            f"{percent_text} | "
+            f"{get_profit_percent_label(route['profit_percent'])}: "
+            f"{format_percent(route['profit_percent'])} | "
             f"اجرا: "
             f"{route['execution_ratio'] * 100:.1f}% "
             f"({execution})"
@@ -1230,7 +1183,7 @@ def print_routes(routes):
 
 
 # ============================================================
-# تاریخچه فرصت
+# تاریخچه تحلیلی داخل RAM
 # ============================================================
 
 def update_opportunity_history(
@@ -1292,6 +1245,227 @@ def update_opportunity_history(
                 -OPPORTUNITY_HISTORY_LIMIT:
             ]
         )
+
+
+# ============================================================
+# تاریخچه دائمی
+# ============================================================
+
+def load_persistent_history():
+
+    global persistent_history
+
+    if not os.path.exists(
+        HISTORY_FILE
+    ):
+        persistent_history = []
+        return
+
+    try:
+
+        with open(
+            HISTORY_FILE,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
+            data = json.load(file)
+
+        if isinstance(data, list):
+
+            persistent_history = data[
+                -HISTORY_LIMIT:
+            ]
+
+        else:
+
+            persistent_history = []
+
+    except Exception as e:
+
+        print(
+            f"⚠️ خطا در خواندن تاریخچه: {e}"
+        )
+
+        persistent_history = []
+
+
+def save_persistent_history():
+
+    try:
+
+        with open(
+            HISTORY_FILE,
+            "w",
+            encoding="utf-8"
+        ) as file:
+
+            json.dump(
+                persistent_history[
+                    -HISTORY_LIMIT:
+                ],
+                file,
+                ensure_ascii=False,
+                indent=2
+            )
+
+    except Exception as e:
+
+        print(
+            f"⚠️ خطا در ذخیره تاریخچه: {e}"
+        )
+
+
+def save_history_record(
+    route
+):
+
+    global persistent_history
+
+    # فقط فرصت‌های واقعاً واجد شرایط
+    if (
+        route["net_profit"]
+        < MIN_NET_PROFIT_TOMAN
+    ):
+        return False
+
+    if (
+        route["profit_percent"]
+        < MIN_PROFIT_PERCENT
+    ):
+        return False
+
+    if (
+        route["execution_ratio"]
+        < MIN_EXECUTION_RATIO
+    ):
+        return False
+
+    now = now_tehran()
+
+    record = {
+        "timestamp":
+            now.strftime(
+                "%Y-%m-%d %H:%M:%S"
+            ),
+
+        "date":
+            now.strftime(
+                "%Y-%m-%d"
+            ),
+
+        "time":
+            now.strftime(
+                "%H:%M:%S"
+            ),
+
+        "buy_exchange":
+            route["buy_exchange"],
+
+        "sell_exchange":
+            route["sell_exchange"],
+
+        "capital_toman":
+            selected_capital_toman,
+
+        "spent":
+            route["spent"],
+
+        "usdt":
+            route["usdt"],
+
+        "received":
+            route["received"],
+
+        "net_profit":
+            route["net_profit"],
+
+        "profit_percent":
+            route["profit_percent"],
+
+        "buy_price":
+            route["buy_price"],
+
+        "sell_price":
+            route["sell_price"],
+
+        "buy_orderbook_levels":
+            route["buy_orderbook_levels"],
+
+        "sell_orderbook_levels":
+            route["sell_orderbook_levels"],
+
+        "execution_ratio":
+            route["execution_ratio"],
+
+        "buy_fee":
+            route["buy_fee"],
+
+        "sell_fee":
+            route["sell_fee"],
+    }
+
+    # جلوگیری از ثبت تکراری همان فرصت
+    # در فاصله بسیار کوتاه
+    if persistent_history:
+
+        last = persistent_history[-1]
+
+        same_route = (
+            last.get("buy_exchange")
+            == record["buy_exchange"]
+            and
+            last.get("sell_exchange")
+            == record["sell_exchange"]
+        )
+
+        try:
+
+            last_time = datetime.strptime(
+                last.get(
+                    "timestamp",
+                    ""
+                ),
+                "%Y-%m-%d %H:%M:%S"
+            ).replace(
+                tzinfo=TEHRAN_TZ
+            )
+
+            seconds_since = (
+                now - last_time
+            ).total_seconds()
+
+        except Exception:
+
+            seconds_since = 999999
+
+        # اگر همان مسیر در کمتر از 60 ثانیه
+        # دوباره دیده شود، رکورد جدید نساز
+        if (
+            same_route
+            and seconds_since < 60
+        ):
+
+            return False
+
+    persistent_history.append(
+        record
+    )
+
+    if (
+        len(persistent_history)
+        > HISTORY_LIMIT
+    ):
+
+        persistent_history = (
+            persistent_history[
+                -HISTORY_LIMIT:
+            ]
+        )
+
+    save_persistent_history()
+
+    return True
 
 
 def analyze_route_history(
@@ -2004,6 +2178,66 @@ def alert_threshold_keyboard():
                     "callback_data":
                         "MENU:STATUS"
                 },
+
+                {
+                    "text": "📚 تاریخچه",
+                    "callback_data":
+                        "MENU:HISTORY"
+                },
+            ],
+
+            [
+                {
+                    "text": "↩️ برگشت",
+                    "callback_data":
+                        "MENU:MAIN"
+                },
+            ],
+        ]
+    }
+
+
+# ============================================================
+# منوی تاریخچه
+# ============================================================
+
+def history_keyboard():
+
+    return {
+        "inline_keyboard": [
+
+            [
+                {
+                    "text": "📅 امروز",
+                    "callback_data":
+                        "HISTORY:TODAY"
+                },
+                {
+                    "text": "📅 دیروز",
+                    "callback_data":
+                        "HISTORY:YESTERDAY"
+                },
+            ],
+
+            [
+                {
+                    "text": "📊 ۷ روز اخیر",
+                    "callback_data":
+                        "HISTORY:7DAYS"
+                },
+                {
+                    "text": "📈 آمار کامل",
+                    "callback_data":
+                        "HISTORY:ALL"
+                },
+            ],
+
+            [
+                {
+                    "text": "🔄 تازه‌سازی",
+                    "callback_data":
+                        "MENU:HISTORY"
+                },
             ],
 
             [
@@ -2032,6 +2266,12 @@ def main_menu_keyboard():
                     "callback_data":
                         "MENU:STATUS"
                 },
+
+                {
+                    "text": "📚 تاریخچه",
+                    "callback_data":
+                        "MENU:HISTORY"
+                },
             ],
 
             [
@@ -2040,9 +2280,7 @@ def main_menu_keyboard():
                     "callback_data":
                         "MENU:CAPITAL"
                 },
-            ],
 
-            [
                 {
                     "text": "🎯 حد هشدار",
                     "callback_data":
@@ -2067,6 +2305,12 @@ def selected_capital_keyboard():
                     "text": "📊 وضعیت",
                     "callback_data":
                         "MENU:STATUS"
+                },
+
+                {
+                    "text": "📚 تاریخچه",
+                    "callback_data":
+                        "MENU:HISTORY"
                 },
             ],
 
@@ -2138,6 +2382,414 @@ def send_alert_threshold_menu():
         f"💡 حداقل سود خالص قابل‌اعتنا: "
         f"{format_toman(MIN_NET_PROFIT_TOMAN)} تومان",
         alert_threshold_keyboard()
+    )
+
+
+# ============================================================
+# ساخت صفحه تاریخچه
+# ============================================================
+
+def get_history_records_today():
+
+    today = now_tehran().date()
+
+    result = []
+
+    for record in persistent_history:
+
+        try:
+
+            record_date = datetime.strptime(
+                record.get("date", ""),
+                "%Y-%m-%d"
+            ).date()
+
+            if record_date == today:
+                result.append(record)
+
+        except Exception:
+            continue
+
+    return result
+
+
+def get_history_records_yesterday():
+
+    yesterday = (
+        now_tehran().date()
+        - timedelta(days=1)
+    )
+
+    result = []
+
+    for record in persistent_history:
+
+        try:
+
+            record_date = datetime.strptime(
+                record.get("date", ""),
+                "%Y-%m-%d"
+            ).date()
+
+            if record_date == yesterday:
+                result.append(record)
+
+        except Exception:
+            continue
+
+    return result
+
+
+def get_history_records_7days():
+
+    today = now_tehran().date()
+
+    start_date = (
+        today
+        - timedelta(days=6)
+    )
+
+    result = []
+
+    for record in persistent_history:
+
+        try:
+
+            record_date = datetime.strptime(
+                record.get("date", ""),
+                "%Y-%m-%d"
+            ).date()
+
+            if (
+                start_date
+                <= record_date
+                <= today
+            ):
+                result.append(record)
+
+        except Exception:
+            continue
+
+    return result
+
+
+def build_history_record_text(
+    record
+):
+
+    profit = record.get(
+        "net_profit",
+        0
+    )
+
+    percent = record.get(
+        "profit_percent",
+        0
+    )
+
+    return (
+        f"🕐 {record.get('timestamp', '-')}\n"
+        f"{record.get('buy_exchange', '-')} → "
+        f"{record.get('sell_exchange', '-')}\n"
+        f"{format_profit_line(profit)}\n"
+        f"{format_profit_percent_line(percent)}\n"
+        f"💰 سرمایه: "
+        f"{format_toman(record.get('capital_toman'))} تومان\n"
+        f"📥 خرید: "
+        f"{format_toman(record.get('buy_price'))} تومان "
+        f"({record.get('buy_orderbook_levels', 0)} لول)\n"
+        f"📤 فروش: "
+        f"{format_toman(record.get('sell_price'))} تومان "
+        f"({record.get('sell_orderbook_levels', 0)} لول)"
+    )
+
+
+def build_history_message(
+    records,
+    title
+):
+
+    lines = [
+        f"📚 تاریخچه آربیتراژ",
+        f"🗂 {title}",
+        "",
+    ]
+
+    if not records:
+
+        lines.extend([
+            "ℹ️ هنوز فرصت واجد شرایطی در این بازه ثبت نشده است.",
+            "",
+            f"🎯 حد هشدار فعلی: "
+            f"{MIN_PROFIT_PERCENT:.1f}%",
+            f"💡 حداقل سود: "
+            f"{format_toman(MIN_NET_PROFIT_TOMAN)} تومان",
+        ])
+
+        return "\n".join(lines)
+
+    # جدیدترین موارد اول
+    selected = list(
+        reversed(records)
+    )
+
+    # برای جلوگیری از پیام خیلی بزرگ
+    selected = selected[:15]
+
+    for index, record in enumerate(
+        selected,
+        start=1
+    ):
+
+        lines.extend([
+            f"#{index}",
+            build_history_record_text(
+                record
+            ),
+            "",
+            "━━━━━━━━━━━━━━",
+            "",
+        ])
+
+    if len(records) > 15:
+
+        lines.extend([
+            f"ℹ️ نمایش ۱۵ مورد از "
+            f"{len(records)} مورد.",
+            "",
+        ])
+
+    # خلاصه بازه
+    total_profit = sum(
+        float(
+            record.get(
+                "net_profit",
+                0
+            )
+        )
+        for record in records
+    )
+
+    average_percent = (
+        sum(
+            float(
+                record.get(
+                    "profit_percent",
+                    0
+                )
+            )
+            for record in records
+        )
+        / len(records)
+    )
+
+    lines.extend([
+        "📊 خلاصه این بازه",
+        "",
+        f"تعداد فرصت: {len(records)}",
+        f"مجموع سود ثبت‌شده: "
+        f"{format_toman_signed(total_profit)} تومان",
+        f"میانگین درصد: "
+        f"{format_percent(average_percent)}",
+    ])
+
+    return "\n".join(lines)
+
+
+def build_history_all_stats():
+
+    lines = [
+        "📈 آمار کامل تاریخچه",
+        "",
+    ]
+
+    total = len(
+        persistent_history
+    )
+
+    if total == 0:
+
+        lines.extend([
+            "ℹ️ هنوز تاریخچه‌ای ثبت نشده است.",
+            "",
+            f"🎯 حد هشدار: "
+            f"{MIN_PROFIT_PERCENT:.1f}%",
+        ])
+
+        return "\n".join(lines)
+
+    total_profit = sum(
+        float(
+            record.get(
+                "net_profit",
+                0
+            )
+        )
+        for record in persistent_history
+    )
+
+    average_profit = (
+        total_profit / total
+    )
+
+    average_percent = (
+        sum(
+            float(
+                record.get(
+                    "profit_percent",
+                    0
+                )
+            )
+            for record in persistent_history
+        )
+        / total
+    )
+
+    best_record = max(
+        persistent_history,
+        key=lambda x: float(
+            x.get(
+                "net_profit",
+                0
+            )
+        )
+    )
+
+    route_counts = {}
+
+    for record in persistent_history:
+
+        key = (
+            f"{record.get('buy_exchange', '-')}"
+            f" → "
+            f"{record.get('sell_exchange', '-')}"
+        )
+
+        route_counts[key] = (
+            route_counts.get(key, 0)
+            + 1
+        )
+
+    most_common_route = max(
+        route_counts,
+        key=route_counts.get
+    )
+
+    lines.extend([
+
+        f"📌 تعداد کل فرصت‌های ثبت‌شده: "
+        f"{total}",
+
+        "",
+
+        "💰 نتیجه ثبت‌شده:",
+
+        f"{format_profit_line(total_profit)}",
+
+        f"📊 میانگین سود/زیان: "
+        f"{format_percent(average_percent)}",
+
+        "",
+
+        "🏆 بیشترین سود ثبت‌شده:",
+
+        f"{format_toman(best_record.get('net_profit', 0))} تومان",
+
+        f"مسیر: "
+        f"{best_record.get('buy_exchange', '-')} → "
+        f"{best_record.get('sell_exchange', '-')}",
+
+        f"زمان: "
+        f"{best_record.get('timestamp', '-')}",
+
+        "",
+
+        "🔁 پرتکرارترین مسیر:",
+
+        f"{most_common_route}",
+
+        f"تعداد ثبت: "
+        f"{route_counts[most_common_route]}",
+
+        "",
+
+        f"🎯 حد هشدار فعلی: "
+        f"{MIN_PROFIT_PERCENT:.1f}%",
+
+        f"💡 حداقل سود قابل‌اعتنا: "
+        f"{format_toman(MIN_NET_PROFIT_TOMAN)} تومان",
+
+        "",
+
+        f"📦 ظرفیت ذخیره تاریخچه: "
+        f"{HISTORY_LIMIT} رکورد",
+
+    ])
+
+    return "\n".join(lines)
+
+
+def send_history_menu():
+
+    return send_telegram(
+        "📚 تاریخچه آربیتراژ\n\n"
+        f"🗃 تعداد رکورد ذخیره‌شده: "
+        f"{len(persistent_history)}\n\n"
+        "بازه موردنظر را انتخاب کنید:",
+        history_keyboard()
+    )
+
+
+def send_history_today():
+
+    records = (
+        get_history_records_today()
+    )
+
+    return send_telegram(
+        build_history_message(
+            records,
+            "امروز"
+        ),
+        history_keyboard()
+    )
+
+
+def send_history_yesterday():
+
+    records = (
+        get_history_records_yesterday()
+    )
+
+    return send_telegram(
+        build_history_message(
+            records,
+            "دیروز"
+        ),
+        history_keyboard()
+    )
+
+
+def send_history_7days():
+
+    records = (
+        get_history_records_7days()
+    )
+
+    return send_telegram(
+        build_history_message(
+            records,
+            "۷ روز اخیر"
+        ),
+        history_keyboard()
+    )
+
+
+def send_history_all():
+
+    return send_telegram(
+        build_history_all_stats(),
+        history_keyboard()
     )
 
 
@@ -2312,6 +2964,80 @@ def handle_telegram_update(
             )
 
             send_current_status_message()
+
+            return
+
+        # ====================================================
+        # تاریخچه
+        # ====================================================
+
+        if data == "MENU:HISTORY":
+
+            waiting_for_custom_capital = False
+            waiting_for_custom_alert_threshold = False
+
+            answer_callback_query(
+                callback_id,
+                "تاریخچه"
+            )
+
+            send_history_menu()
+
+            return
+
+        if data == "HISTORY:TODAY":
+
+            waiting_for_custom_capital = False
+            waiting_for_custom_alert_threshold = False
+
+            answer_callback_query(
+                callback_id,
+                "تاریخچه امروز"
+            )
+
+            send_history_today()
+
+            return
+
+        if data == "HISTORY:YESTERDAY":
+
+            waiting_for_custom_capital = False
+            waiting_for_custom_alert_threshold = False
+
+            answer_callback_query(
+                callback_id,
+                "تاریخچه دیروز"
+            )
+
+            send_history_yesterday()
+
+            return
+
+        if data == "HISTORY:7DAYS":
+
+            waiting_for_custom_capital = False
+            waiting_for_custom_alert_threshold = False
+
+            answer_callback_query(
+                callback_id,
+                "تاریخچه ۷ روز اخیر"
+            )
+
+            send_history_7days()
+
+            return
+
+        if data == "HISTORY:ALL":
+
+            waiting_for_custom_capital = False
+            waiting_for_custom_alert_threshold = False
+
+            answer_callback_query(
+                callback_id,
+                "آمار کامل"
+            )
+
+            send_history_all()
 
             return
 
@@ -2529,6 +3255,18 @@ def handle_telegram_update(
         waiting_for_custom_alert_threshold = False
 
         send_current_status_message()
+
+        return
+
+    if text in (
+        "/history",
+        "تاریخچه"
+    ):
+
+        waiting_for_custom_capital = False
+        waiting_for_custom_alert_threshold = False
+
+        send_history_menu()
 
         return
 
@@ -2827,23 +3565,7 @@ def send_arbitrage_alert(
 
         f"{format_orderbook_execution(route)}\n\n"
 
-        "📋 جزئیات خرید و فروش:\n\n"
-
-        f"📥 خرید\n"
-        f"صرافی: {route['buy_exchange']}\n"
-        f"مبلغ: {format_toman(route['spent'])} تومان\n"
-        f"تعداد لول: "
-        f"{route['buy_orderbook_levels']} لول\n"
-        f"میانگین: "
-        f"{format_toman(route['buy_price'])} تومان\n\n"
-
-        f"📤 فروش\n"
-        f"صرافی: {route['sell_exchange']}\n"
-        f"مبلغ: {format_usdt(route['usdt'])} تتر\n"
-        f"تعداد لول: "
-        f"{route['sell_orderbook_levels']} لول\n"
-        f"میانگین: "
-        f"{format_toman(route['sell_price'])} تومان\n\n"
+        f"{build_trade_details_table(route)}\n\n"
 
         f"💳 کارمزد خرید: "
         f"{route['buy_fee'] * 100:.1f}% "
@@ -3000,14 +3722,8 @@ def build_current_status_message(
     )
 
     lines = [
-
         "📊 وضعیت فعلی آربیتراژ",
-
     ]
-
-    # ========================================================
-    # بهترین مسیر
-    # ========================================================
 
     if latest_routes:
 
@@ -3038,19 +3754,19 @@ def build_current_status_message(
 
         elif (
             best["net_profit"]
-            >= MIN_NET_PROFIT_TOMAN
+            > 0
         ):
 
             status_line = (
-                "🟢 وضعیت: بهترین مسیر فعلی "
-                "حداقل سود موردنظر را دارد، اما به حد هشدار نرسیده."
+                "🟡 وضعیت: بهترین مسیر فعلی "
+                "سود دارد، اما هنوز به حد هشدار نرسیده."
             )
 
         else:
 
             status_line = (
                 "🔴 وضعیت: بهترین مسیر فعلی "
-                "به حداقل سود ۳۰۰ هزار تومان نرسیده است."
+                "پس از کارمزد زیان‌ده است."
             )
 
         lines.extend([
@@ -3132,17 +3848,13 @@ def build_current_status_message(
             f"• واجد شرایط: "
             f"{history['qualified_observations']}",
 
-            f"• میانگین سود: "
-            f"{format_profit_percent_line(history['average_profit_percent'])}",
+            f"• میانگین سود/زیان: "
+            f"{format_percent(history['average_profit_percent'])}",
 
             "",
 
             "🏆 سه مسیر برتر فعلی:",
         ])
-
-        # ====================================================
-        # سه مسیر برتر
-        # ====================================================
 
         for index, route in enumerate(
             latest_routes[:3],
@@ -3196,10 +3908,6 @@ def build_current_status_message(
             "ℹ️ فعلاً مسیر قابل محاسبه‌ای وجود ندارد.",
         ])
 
-    # ========================================================
-    # وضعیت صرافی‌ها
-    # ========================================================
-
     lines.extend([
 
         "",
@@ -3252,10 +3960,6 @@ def build_current_status_message(
                 "❌ Order Book نامعتبر",
 
             ])
-
-    # ========================================================
-    # آمار امروز
-    # ========================================================
 
     lines.extend([
 
@@ -3317,6 +4021,14 @@ def send_current_status_message(
                         "text": "🎯 تغییر حد هشدار",
                         "callback_data":
                             "MENU:ALERT",
+                    },
+                ],
+
+                [
+                    {
+                        "text": "📚 تاریخچه",
+                        "callback_data":
+                            "MENU:HISTORY",
                     },
                 ],
 
@@ -3404,7 +4116,10 @@ def send_startup_message():
         "📊 گزارش وضعیت: هر دو ساعت\n"
 
         "🌙 گزارش دوره‌ای: "
-        "23:00 تا 08:00 متوقف\n"
+        "23:00 تا 08:00 متوقف\n\n"
+
+        f"📚 تاریخچه ذخیره‌شده: "
+        f"{len(persistent_history)} رکورد\n\n"
 
         "⏰ چرخه گزارش از 18:00 محاسبه می‌شود."
     )
@@ -3474,7 +4189,18 @@ def main():
         "================================================"
     )
 
+    # ========================================================
+    # بارگذاری آمار و تاریخچه
+    # ========================================================
+
     stats = load_stats()
+
+    load_persistent_history()
+
+    print(
+        f"📚 تاریخچه دائمی: "
+        f"{len(persistent_history)} رکورد"
+    )
 
     send_startup_message()
 
@@ -3499,6 +4225,7 @@ def main():
             )
 
             save_stats(stats)
+            save_persistent_history()
 
             break
 
@@ -3592,7 +4319,6 @@ def main():
                     format_profit_percent_line(
                         best["profit_percent"]
                     )
-
                 )
 
                 print(
@@ -3611,6 +4337,23 @@ def main():
                         best
                     )
                 )
+
+                # ====================================================
+                # ثبت تاریخچه دائمی
+                # ====================================================
+
+                history_saved = (
+                    save_history_record(
+                        best
+                    )
+                )
+
+                if history_saved:
+
+                    print(
+                        "📚 فرصت واجد شرایط "
+                        "در تاریخچه ذخیره شد."
+                    )
 
                 if (
                     best["net_profit"]
@@ -3696,6 +4439,8 @@ if __name__ == "__main__":
             "⏹️ ربات به صورت دستی متوقف شد."
         )
 
+        save_persistent_history()
+
     except Exception as e:
 
         print()
@@ -3703,5 +4448,7 @@ if __name__ == "__main__":
         print(
             f"❌ خطای جدی: {e}"
         )
+
+        save_persistent_history()
 
         raise
